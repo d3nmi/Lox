@@ -25,6 +25,11 @@ function rndSerial(len = 8) {
   for (let i = 0; i < len; i++) s += chars[Math.floor(Math.random() * chars.length)];
   return s;
 }
+function rndBoxCode() {
+  // Реальный формат: префикс DTV + 10 цифр, пример DTV0003111664
+  const digits = String(Math.floor(Math.random() * 1e10)).padStart(10, '0');
+  return `DTV${digits}`;
+}
 function escapeHtml(s) {
   return String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
@@ -345,7 +350,7 @@ function renderChips(currentKit) {
       addChip(`Начать: ${shortName(tpl.kit_name)}`, `01${tpl.items[0].item_sku}21${rndSerial()}`);
     });
   }
-  addChip('Агрегат короба', `BOXAGG-${Date.now().toString(36).toUpperCase()}${rndSerial(3)}`);
+  addChip('Код короба', rndBoxCode());
   addChip('ШК паллеты', `PLT-${Date.now().toString(36).toUpperCase()}${rndSerial(3)}`);
 
   const dupChip = document.createElement('div');

@@ -24,6 +24,8 @@ import sqlite3
 from .db import conn, transaction, read_lock, next_scan_order
 
 GTIN_RE = re.compile(r'^01(\d{14})')
+BOX_CODE_RE = re.compile(r'^DTV\d{10}$')  # реальный формат короба, пример: DTV0003111664
+MAX_KITS_PER_BOX = 80  # временный лимит наборов на один короб — заменить на реальный
 
 
 def short_name(name):
@@ -59,32 +61,92 @@ def _ok(station_id, code, code_type, message):
     return {'result': 'ok', 'message': message, 'code_type': code_type}
 
 
-# ---- закрытие короба (общий пул всех станций); вызывается УЖЕ внутри транзакции ----
-def _close_box(station_id, code):
+# ---- работа с коробом (общий пул всех станций); вызывается УЖЕ внутри транзакции ----
+#
+# Короб не закрывается одним сканом. Реальный код короба (DTV…) — это
+# постоянная наклейка на физическом коробе, и её сканируют ПОВТОРНО каждый
+# раз, когда в короб кладут очередную порцию готовых наборов — пока короб
+# не наполнится до MAX_KITS_PER_BOX. Поэтому пока короб не заполнен, его
+# код НЕ попадает в used_codes (иначе повторный скан тут же отбивался бы
+# глобальной проверкой дубля в process_scan, до входа в эту функцию) —
+# в used_codes код короба попадает только в момент фактического закрытия.
+def _handle_box_code(station_id, code):
     own_open_kit = conn.execute(
         "SELECT * FROM kits WHERE station_id=? AND status='open'", (station_id,)
     ).fetchone()
     if own_open_kit:
         return _fail(
             station_id, code, 'box_agg',
-            f'Нельзя закрыть короб — на вашей станции набор «{short_name(own_open_kit["kit_name"])}» ещё не завершён'
+            f'Нельзя работать с коробом — на вашей станции набор «{short_name(own_open_kit["kit_name"])}» ещё не завершён'
         )
 
-    orphan_kits = conn.execute(
+    orphan_kits_all = conn.execute(
         "SELECT * FROM kits WHERE status='closed' AND box_id IS NULL ORDER BY closed_at"
     ).fetchall()
-    if not orphan_kits:
-        return _fail(station_id, code, 'box_agg', 'Нельзя закрыть короб — в него не помещено ни одного набора')
 
-    cur = conn.execute(
-        "INSERT INTO boxes (km_box_code, station_id, status, kits_count, scan_order, opened_at, closed_at) "
-        "VALUES (?, ?, 'closed', ?, ?, datetime('now','localtime'), datetime('now','localtime'))",
-        (code, station_id, len(orphan_kits), next_scan_order()),
+    existing_box = conn.execute(
+        "SELECT * FROM boxes WHERE km_box_code=? AND status='open'", (code,)
+    ).fetchone()
+
+    if existing_box:
+        capacity_left = MAX_KITS_PER_BOX - existing_box["kits_count"]
+        take = orphan_kits_all[:capacity_left]
+        if not take:
+            return _fail(station_id, code, 'box_agg', 'В общем пуле нет новых наборов для добавления в этот короб')
+        box_id = existing_box["id"]
+        new_count = existing_box["kits_count"] + len(take)
+    else:
+        if not orphan_kits_all:
+            return _fail(station_id, code, 'box_agg', 'Нельзя открыть короб — в общем пуле нет ни одного набора')
+        take = orphan_kits_all[:MAX_KITS_PER_BOX]
+        new_count = len(take)
+
+    now_closing = new_count >= MAX_KITS_PER_BOX
+
+    if existing_box:
+        if now_closing:
+            conn.execute(
+                "UPDATE boxes SET kits_count=?, status='closed', closed_at=datetime('now','localtime'), scan_order=? WHERE id=?",
+                (new_count, next_scan_order(), box_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE boxes SET kits_count=?, scan_order=? WHERE id=?",
+                (new_count, next_scan_order(), box_id),
+            )
+    else:
+        status = 'closed' if now_closing else 'open'
+        closed_at_sql = "datetime('now','localtime')" if now_closing else "NULL"
+        cur = conn.execute(
+            "INSERT INTO boxes (km_box_code, station_id, status, kits_count, scan_order, opened_at, closed_at) "
+            f"VALUES (?, ?, ?, ?, ?, datetime('now','localtime'), {closed_at_sql})",
+            (code, station_id, status, new_count, next_scan_order()),
+        )
+        box_id = cur.lastrowid
+
+    conn.executemany("UPDATE kits SET box_id=? WHERE id=?", [(box_id, k["id"]) for k in take])
+    # Код короба на момент закрытия наборов ещё не был известен (см. ниже,
+    # где заполняется export_data) — дополняем его теперь. Строки в
+    # export_data уже существуют для каждого вложения этих наборов, здесь
+    # только простановка box-кода (актуален даже пока короб ещё открыт).
+    conn.executemany(
+        "UPDATE export_data SET km_box_code=? WHERE kit_id=?",
+        [(code, k["id"]) for k in take],
     )
-    box_id = cur.lastrowid
-    conn.executemany("UPDATE kits SET box_id=? WHERE id=?", [(box_id, k["id"]) for k in orphan_kits])
-    _mark_used(code, 'box_agg', station_id)
-    return _ok(station_id, code, 'box_agg', f'Короб закрыт ({len(orphan_kits)} наборов внутри, из разных станций)')
+
+    remaining_pool = len(orphan_kits_all) - len(take)
+
+    if now_closing:
+        _mark_used(code, 'box_agg', station_id)
+        extra = f', ещё {remaining_pool} наборов осталось в пуле на следующий короб' if remaining_pool > 0 else ''
+        return _ok(station_id, code, 'box_agg', f'Короб закрыт: {new_count}/{MAX_KITS_PER_BOX} наборов внутри, из разных станций{extra}')
+    else:
+        extra = f', ещё {remaining_pool} наборов осталось в пуле' if remaining_pool > 0 else ''
+        return _ok(
+            station_id, code, 'box_agg',
+            f'В короб добавлено {len(take)} набор(ов), итого {new_count}/{MAX_KITS_PER_BOX}{extra} — '
+            f'короб пока открыт, отсканируйте тот же код ещё раз, чтобы добавить наборы'
+        )
 
 
 # ---- закрытие паллеты (общий пул всех станций); вызывается УЖЕ внутри транзакции ----
@@ -113,7 +175,7 @@ def _handle_item_or_kit_agg(station_id, code):
         return _fail(
             station_id, code, 'unknown',
             f'Код "{code[:24]}" не распознан (ожидается GS1-код товара/набора или '
-            f'агрегат короба "BOXAGG…" / паллеты "PLT-…")'
+            f'код короба "DTV…" / паллеты "PLT-…")'
         )
 
     open_kit = conn.execute(
@@ -191,6 +253,17 @@ def _handle_item_or_kit_agg(station_id, code):
         (code, next_scan_order(), open_kit["id"]),
     )
     _mark_used(code, 'kit_agg', station_id)
+
+    # Отдельная выгрузочная таблица (не зависит от items/kits/boxes):
+    # по строке на каждое вложение закрытого набора, код короба пока
+    # неизвестен (наполняемость короба наборами станет ясна позже, при
+    # закрытии короба — см. _handle_box_code) и до этого момента остаётся NULL.
+    kit_items = conn.execute("SELECT km_code FROM items WHERE kit_id=?", (open_kit["id"],)).fetchall()
+    conn.executemany(
+        "INSERT INTO export_data (kit_id, km_agg_code, km_code) VALUES (?, ?, ?)",
+        [(open_kit["id"], code, it["km_code"]) for it in kit_items],
+    )
+
     in_pool = conn.execute("SELECT COUNT(*) c FROM kits WHERE status='closed' AND box_id IS NULL").fetchone()["c"]
     return _ok(station_id, code, 'kit_agg', f'Набор закрыт агрегационным кодом · наборов в общем пуле на короб: {in_pool}')
 
@@ -210,8 +283,8 @@ def process_scan(station_id, raw_code):
             return _fail(station_id, code, dup["code_type"], f'Код уже был отсканирован ранее (дубль): {code}')
 
         try:
-            if code.startswith('BOXAGG'):
-                return _close_box(station_id, code)
+            if BOX_CODE_RE.match(code):
+                return _handle_box_code(station_id, code)
             if code.startswith('PLT-'):
                 return _close_pallet(station_id, code)
             return _handle_item_or_kit_agg(station_id, code)

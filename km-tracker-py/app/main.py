@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from .db import conn, init_db
 from .validation import process_scan, get_station_state
 from .control import build_tree, search_code, get_stats
-from .report import export_csv, report_rows, report_count
+from .report import export_csv, report_rows, report_count, export_data_csv, export_data_rows, export_data_count
 from .backup import run_backup, schedule_backups, list_backups
 from .paths import resource_dir
 
@@ -117,6 +117,25 @@ def export():
         content=csv_text,
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": 'attachment; filename="km_export.csv"'},
+    )
+
+
+# ---------- отдельная выгрузка: набор / вложение / короб ----------
+# Источник — таблица export_data (см. schema.sql и validation.py): код
+# короба в строках заполняется не сразу, а когда короб закрывается и
+# становится известна его наполняемость наборами.
+@app.get("/api/export-data/preview")
+def export_data_preview(limit: int = Query(default=200, ge=1, le=5000)):
+    return {"rows": export_data_rows(limit), "total": export_data_count()}
+
+
+@app.get("/api/export-data.csv")
+def export_data_export():
+    csv_text = export_data_csv()
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="km_export_data.csv"'},
     )
 
 

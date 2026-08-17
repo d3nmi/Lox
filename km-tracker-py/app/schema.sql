@@ -86,6 +86,22 @@ CREATE TABLE IF NOT EXISTS items (
 CREATE INDEX IF NOT EXISTS idx_items_kit ON items(kit_id);
 CREATE INDEX IF NOT EXISTS idx_items_code ON items(km_code);
 
+-- Отдельная выгрузка: набор / вложение / короб (Этап 4.3+), не зависит
+-- от items/kits/boxes при чтении. По строке на каждое вложение появляется
+-- в момент закрытия набора; km_box_code сперва NULL — наполняемость короба
+-- наборами становится известна позже, при закрытии короба
+-- (см. validation.py: _handle_item_or_kit_agg заполняет строку,
+-- _close_box дозаполняет km_box_code).
+CREATE TABLE IF NOT EXISTS export_data (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  kit_id        INTEGER NOT NULL REFERENCES kits(id) ON DELETE CASCADE,
+  km_agg_code   TEXT NOT NULL,
+  km_code       TEXT NOT NULL,
+  km_box_code   TEXT,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_export_data_kit ON export_data(kit_id);
+
 -- Журнал всех сканов (успешных и ошибочных) — для разбора инцидентов
 CREATE TABLE IF NOT EXISTS scan_log (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
