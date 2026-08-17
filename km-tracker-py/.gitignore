@@ -1,0 +1,10 @@
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/backups/*.db
+build/
+dist/
+*.spec.bak
+__pycache__/
+*.pyc
+venv/

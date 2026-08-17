@@ -1,0 +1,18 @@
+[
+  {
+    "kit_sku": "08056860397516",
+    "kit_name": "Подарочный набор Гранат (Melograno): Диффузор 250 мл + Рефил 150 мл, Dr. Vranjes Firenze",
+    "items": [
+      { "item_sku": "04600840186740", "item_name": "Ароматический диффузор для дома Melograno 150 мл (рефил)", "qty_required": 1 },
+      { "item_sku": "08033196272298", "item_name": "Ароматический диффузор для дома Melograno 250 мл", "qty_required": 1 }
+    ]
+  },
+  {
+    "kit_sku": "08056860312748",
+    "kit_name": "Подарочный набор Фикодиндия (Fico di India): Диффузор 250 мл + Свеча 200 г, Dr. Vranjes Firenze",
+    "items": [
+      { "item_sku": "08033196207429", "item_name": "Ароматический диффузор для дома Fico di India 250 мл", "qty_required": 1 },
+      { "item_sku": "08033196251859", "item_name": "Ароматическая свеча Fico di India 200 г", "qty_required": 1 }
+    ]
+  }
+]
