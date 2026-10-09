@@ -15,30 +15,24 @@
      выключена → набор закрывается автоматически, короб сканировать не нужно.
    Номер набора в отчёте присваивается сразу при закрытии набора.
    Выбор набора хранится на сервере и сохраняется после закрытия набора.
+
+   ЭТАП 1 (production): удалены тестовые кнопки (чипы) и связанный с ними
+   код; все запросы к серверу идут строго по одному (очередь) — нет
+   повторного запуска операции, пока предыдущая не завершилась, и при этом
+   ни один скан не теряется; ошибки сервера показываются понятным текстом.
    ============================================================ */
 const API = '';
 const STATION_KEY = 'km_station_id';
-const FAKE_AGG_GTIN = '09999999999990'; // для тестовой кнопки агрегата набора без GTIN в справочнике
+const GENERIC_ERROR = 'Ошибка на сервере. Повторите скан. Если ошибка повторяется — позовите администратора.';
+const NO_CONNECTION = 'Нет связи с сервером. Скан НЕ принят — отсканируйте этот код ещё раз, когда связь восстановится.';
 
 let STATION_ID = null;
 let templates = [];        // [{kit_code, kit_sku, kit_name, ready, missing, items:[...]}]
 let stationState = null;   // последний известный state с сервера
-let lastAcceptedCode = null; // код последнего УСПЕШНОГО скана GS1 (для демо-повтора дубля)
 
 /* ---------- утилиты ---------- */
 function shortName(name) { return (name || '').split(':')[0]; }
 function fmtTime(t) { return (t || '').split(' ')[1] || t || ''; }
-function rndSerial(len = 8) {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let s = '';
-  for (let i = 0; i < len; i++) s += chars[Math.floor(Math.random() * chars.length)];
-  return s;
-}
-function rndBoxCode() {
-  // Реальный формат: префикс DTV + 10 цифр, пример DTV0003111664
-  const digits = String(Math.floor(Math.random() * 1e10)).padStart(10, '0');
-  return `DTV${digits}`;
-}
 function escapeHtml(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
@@ -54,17 +48,41 @@ function beepError() {
   } catch (e) { /* автоплей может быть заблокирован — не критично */ }
 }
 
+/* Запрос к серверу. Сетевой сбой — исключение (его ловит вызывающий код).
+   Ответ сервера с ошибкой (500 и т.п.), не являющийся JSON, превращается
+   в аккуратный объект-ошибку: пользователь не увидит технических деталей. */
 async function api(path, opts) {
   const res = await fetch(API + path, opts);
   setConn(true);
-  if (!res.ok && res.status >= 500) setConn(false);
-  return res.json();
+  let data = null;
+  try { data = await res.json(); } catch (e) { data = null; }
+  if (res.status >= 500) {
+    setConn(false);
+    console.error('Ошибка сервера', res.status, path);
+    return { result: 'error', message: GENERIC_ERROR, code_type: 'unknown' };
+  }
+  if (!res.ok) {
+    console.error('Запрос отклонён', res.status, path, data);
+    const msg = data && typeof data.detail === 'string' ? data.detail : GENERIC_ERROR;
+    return { result: 'error', message: msg, code_type: 'unknown' };
+  }
+  return data;
 }
 function setConn(ok) {
   const dot = document.getElementById('conn-dot');
   const txt = document.getElementById('conn-text');
   dot.classList.toggle('down', !ok);
   txt.textContent = ok ? 'сервер на связи' : 'нет связи с сервером';
+}
+
+/* Очередь операций: действия выполняются СТРОГО ПО ОДНОМУ.
+   Если сканер выдал два кода подряд, второй дождётся окончания первого —
+   ничего не теряется и не перемешивается. */
+let opQueue = Promise.resolve();
+function enqueue(task) {
+  const run = opQueue.then(task, task);
+  opQueue = run.catch(() => {});
+  return run;
 }
 
 /* ============================================================
@@ -120,8 +138,10 @@ document.getElementById('station-badge').addEventListener('click', async () => {
     saveStationId(newId);
     STATION_ID = newId;
     renderStationBadge();
-    stationState = await api(`/api/stations/${encodeURIComponent(STATION_ID)}/state`);
-    renderConsole({ focusInput: true });
+    try {
+      stationState = await api(`/api/stations/${encodeURIComponent(STATION_ID)}/state`);
+      renderConsole({ focusInput: true });
+    } catch (e) { setConn(false); }
   }
 });
 
@@ -134,6 +154,7 @@ async function init() {
   try {
     templates = await api('/api/templates');
     stationState = await api(`/api/stations/${encodeURIComponent(STATION_ID)}/state`);
+    if (!Array.isArray(templates) || !stationState || stationState.result === 'error') throw new Error('bad response');
   } catch (e) {
     setConn(false);
     document.getElementById('consoles-root').innerHTML =
@@ -144,87 +165,92 @@ async function init() {
   document.getElementById('consoles-root').innerHTML = '<div class="console" id="console-root"></div>';
   renderConsole({ focusInput: true });
 
-  await refreshControl();
-  await refreshReport();
-
   setInterval(pollState, 4000);
 }
 
 async function pollState() {
   try {
-    stationState = await api(`/api/stations/${encodeURIComponent(STATION_ID)}/state`);
-    renderConsole();
-  } catch (e) { /* тихо пропускаем — индикатор связи уже покажет проблему */ }
+    const s = await api(`/api/stations/${encodeURIComponent(STATION_ID)}/state`);
+    if (s && s.result !== 'error') { stationState = s; renderConsole(); }
+  } catch (e) { setConn(false); }
 }
 
 /* ============================================================
    ВЫБОР НАБОРА, РЕЖИМ «КОД КОРОБА» И СКАНИРОВАНИЕ
    ============================================================ */
-async function selectKit(kitCode) {
-  let resp;
-  try {
-    resp = await api(`/api/stations/${encodeURIComponent(STATION_ID)}/select-kit`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kit_code: kitCode })
+function selectKit(kitCode) {
+  return enqueue(async () => {
+    let resp;
+    try {
+      resp = await api(`/api/stations/${encodeURIComponent(STATION_ID)}/select-kit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kit_code: kitCode })
+      });
+    } catch (e) {
+      setConn(false);
+      renderConsole({ lastEvent: { result: 'error', message: NO_CONNECTION }, focusInput: true });
+      return;
+    }
+    if (resp.state) stationState = resp.state;
+    renderConsole({
+      lastEvent: resp.result === 'error' ? { result: 'error', message: resp.message } : undefined,
+      focusInput: true
     });
-  } catch (e) {
-    setConn(false);
-    return;
-  }
-  stationState = resp.state;
-  renderConsole({
-    lastEvent: resp.result === 'error' ? { result: 'error', message: resp.message } : undefined,
-    focusInput: true
   });
 }
 
-async function setRequireBox(on) {
-  let resp;
-  try {
-    resp = await api(`/api/stations/${encodeURIComponent(STATION_ID)}/settings`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ require_box: !!on })
-    });
-  } catch (e) {
-    setConn(false);
-    return;
-  }
-  stationState = resp.state;
-  renderConsole({ focusInput: true });
+function setRequireBox(on) {
+  return enqueue(async () => {
+    let resp;
+    try {
+      resp = await api(`/api/stations/${encodeURIComponent(STATION_ID)}/settings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ require_box: !!on })
+      });
+    } catch (e) {
+      setConn(false);
+      renderConsole({ lastEvent: { result: 'error', message: NO_CONNECTION }, focusInput: true });
+      return;
+    }
+    if (resp.state) stationState = resp.state;
+    renderConsole({ focusInput: true });
+  });
 }
 
-async function submitScan(code, opts = {}) {
+function submitScan(code, opts = {}) {
   code = (code || '').trim();
-  if (!code) return;
-  let resp;
-  try {
-    resp = await api(`/api/stations/${encodeURIComponent(STATION_ID)}/scan`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code })
+  if (!code) return Promise.resolve();
+  return enqueue(async () => {
+    let resp;
+    try {
+      resp = await api(`/api/stations/${encodeURIComponent(STATION_ID)}/scan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code })
+      });
+    } catch (e) {
+      setConn(false);
+      renderConsole({ lastEvent: { result: 'error', message: NO_CONNECTION }, focusInput: true });
+      beepError();
+      return;
+    }
+    if (resp.state) stationState = resp.state;
+    renderConsole({
+      lastEvent: { result: resp.result, message: resp.message, code_type: resp.code_type },
+      focusInput: opts.focusInput !== false
     });
-  } catch (e) {
-    setConn(false);
-    return;
-  }
-  stationState = resp.state;
-  if (resp.result === 'ok' && /^01\d{14}/.test(code)) lastAcceptedCode = code;
-  renderConsole({
-    lastEvent: { result: resp.result, message: resp.message, code_type: resp.code_type },
-    focusInput: opts.focusInput !== false
+    const el = document.getElementById('console-root');
+    if (resp.result === 'error') {
+      el.classList.add('flash-err');
+      setTimeout(() => el.classList.remove('flash-err'), 350);
+      beepError();
+    } else if (resp.code_type === 'kit_agg') {
+      el.classList.add('flash-ok');
+      setTimeout(() => el.classList.remove('flash-ok'), 700);
+    }
   });
-  const el = document.getElementById('console-root');
-  if (resp.result === 'error') {
-    el.classList.add('flash-err');
-    setTimeout(() => el.classList.remove('flash-err'), 350);
-    beepError();
-  } else if (resp.code_type === 'kit_agg') {
-    el.classList.add('flash-ok');
-    setTimeout(() => el.classList.remove('flash-ok'), 700);
-  }
-  refreshControlStats(); // счётчики держим свежими постоянно, дерево — по запросу
 }
 
 /* ============================================================
@@ -246,41 +272,41 @@ function ensureConsoleSkeleton() {
       <div class="wh-title"><span class="wh-dot"></span>Рабочее место</div>
       <span class="badge" id="badge-collected">наборов собрано: 0</span>
     </div>
-    <div class="console-body">
-      <label id="box-toggle" style="display:flex;align-items:center;gap:9px;margin-bottom:16px;cursor:pointer;font-size:14px;"
-             title="Включено: в конце набора сканируется код короба DTV… Выключено: набор закрывается автоматически">
-        <input type="checkbox" id="chk-require-box" style="width:17px;height:17px;accent-color:var(--accent);cursor:pointer;">
-        <span>Код короба <span style="color:var(--text-dim);font-size:12.5px;">— сканировать в конце набора (DTV…)</span></span>
-      </label>
+    <div class="console-body two-col">
+      <div class="col-left">
+        <div class="section-label">1. Набор для сборки</div>
+        <div class="kit-picker" id="kit-picker"></div>
 
-      <div class="section-label">Набор для сборки (авто — по КМ, либо выбрать вручную)</div>
-      <div class="kit-picker" id="kit-picker"></div>
-
-      <div class="section-label" id="checklist-label">Что нужно отсканировать</div>
-      <div class="checklist" id="checklist"></div>
-
-      <div class="scan-input-row">
-        <input class="scan-input" id="input-station" placeholder="Скан → сюда (отправится автоматически)" autocomplete="off">
-      </div>
-      <div class="scan-hint" id="hint-station"></div>
-
-      <div class="progress-row">
-        <div class="progress-block">
-          <div class="progress-label">Короб (общий пул склада)</div>
-          <div class="count-badge" id="boxcount-station"></div>
+        <div class="section-label">2. Сканируйте код</div>
+        <div class="scan-input-row">
+          <input class="scan-input" id="input-station" placeholder="Скан → сюда (отправится автоматически)" autocomplete="off">
         </div>
-        <div class="progress-block">
-          <div class="progress-label">Паллета (общий пул склада)</div>
-          <div class="count-badge" id="palletcount-station"></div>
+        <div class="scan-hint" id="hint-station"></div>
+
+        <label id="box-toggle" class="box-toggle"
+               title="Включено: в конце набора сканируется код короба DTV… Выключено: набор закрывается автоматически">
+          <input type="checkbox" id="chk-require-box">
+          <span>Сканировать код короба (DTV…) в конце набора</span>
+        </label>
+      </div>
+
+      <div class="col-right">
+        <div class="section-label" id="checklist-label">Что нужно отсканировать</div>
+        <div class="checklist" id="checklist"></div>
+
+        <div class="progress-row">
+          <div class="progress-block">
+            <div class="progress-label">Закрытых наборов ждут короб</div>
+            <div class="count-badge" id="boxcount-station"></div>
+          </div>
+          <div class="progress-block">
+            <div class="progress-label">Коробов ждут паллету</div>
+            <div class="count-badge" id="palletcount-station"></div>
+          </div>
         </div>
-      </div>
 
-      <div class="quickscan">
-        <div class="quickscan-label">Тестовые коды (клик = скан сканером; серия каждый раз новая)</div>
-        <div class="chip-row" id="chips-station"></div>
+        <div class="feed" id="feed-station"></div>
       </div>
-
-      <div class="feed" id="feed-station"></div>
     </div>
   `;
 
@@ -466,8 +492,6 @@ function renderConsole(opts = {}) {
   document.getElementById('boxcount-station').textContent = `${s.kitsInBox} наборов в пуле`;
   document.getElementById('palletcount-station').textContent = `${s.boxesOnPallet} коробов в пуле`;
 
-  renderChips();
-
   const feedEl = document.getElementById('feed-station');
   feedEl.innerHTML = (s.feed || []).map(f => `
     <div class="feed-line ${f.result}">
@@ -481,170 +505,5 @@ function renderConsole(opts = {}) {
     if (input) input.focus({ preventScroll: true });
   }
 }
-
-function renderChips() {
-  const chipRow = document.getElementById('chips-station');
-  if (!chipRow) return;
-  chipRow.innerHTML = ''; // родитель персистентный — очистка перед перестройкой обязательна
-  const addChip = (label, code, danger) => {
-    const chip = document.createElement('div');
-    chip.className = 'chip' + (danger ? ' danger' : '');
-    chip.textContent = label;
-    chip.title = code;
-    chip.onclick = () => submitScan(code);
-    chipRow.appendChild(chip);
-    return code;
-  };
-
-  const s = stationState;
-  const sel = s.selectedKit;
-  const readyTpls = templates.filter(t => t.ready);
-
-  // Из каких наборов предлагать тестовые коды: выбранный/определённый → он один;
-  // набор определяется → варианты; иначе (авто, пусто) → все наборы справочника.
-  let pool = readyTpls;
-  if (s.pending) {
-    const codes = s.pending.candidates.map(c => c.kit_code);
-    pool = readyTpls.filter(t => codes.includes(t.kit_code));
-  } else if (sel) {
-    pool = readyTpls.filter(t => t.kit_code === sel.kit_code);
-  }
-
-  const scannedBySku = {};
-  ((s.currentKit && s.currentKit.items) || []).forEach(it => { scannedBySku[it.item_sku] = (scannedBySku[it.item_sku] || 0) + 1; });
-
-  if (s.awaitingBox) {
-    // набор закрыт, ждём код короба — тестовых кнопок товаров не нужно
-  } else if (sel && sel.agg_ready) {
-    const tpl = pool[0];
-    if (tpl) addChip(`Агрегат набора «${tpl.kit_name}»`, `01${tpl.kit_sku || FAKE_AGG_GTIN}21${rndSerial()}`);
-  } else {
-    const seen = new Set();
-    pool.forEach(tpl => {
-      tpl.items.forEach(it => {
-        if (seen.has(it.item_sku)) return;       // один и тот же товар в нескольких наборах — одна кнопка
-        seen.add(it.item_sku);
-        if ((scannedBySku[it.item_sku] || 0) >= it.qty_required) return;
-        if (it.marked) addChip(`КМ: ${it.item_name}`, `01${it.item_sku}21${rndSerial()}`);
-        else addChip(`Упаковка: ${it.item_name}`, it.item_sku.replace(/^0/, ''));
-      });
-    });
-  }
-  addChip('Код короба', rndBoxCode());
-  addChip('ШК паллеты', `PLT-${Date.now().toString(36).toUpperCase()}${rndSerial(3)}`);
-
-  const dupChip = document.createElement('div');
-  dupChip.className = 'chip danger' + (lastAcceptedCode ? '' : ' disabled');
-  dupChip.textContent = '⚠ повторить последний ПРИНЯТЫЙ КМ (дубль)';
-  if (lastAcceptedCode) {
-    dupChip.title = lastAcceptedCode;
-    dupChip.onclick = () => submitScan(lastAcceptedCode);
-  } else {
-    dupChip.title = 'Пока нечего повторять — не было ни одного успешного скана КМ';
-    dupChip.style.opacity = '0.4';
-    dupChip.style.cursor = 'default';
-  }
-  chipRow.appendChild(dupChip);
-}
-
-/* ============================================================
-   ВКЛАДКА КОНТРОЛЬ
-   ============================================================ */
-async function refreshControlStats() {
-  const stats = await api('/api/stats');
-  const stat = document.getElementById('stat-strip');
-  stat.innerHTML = `
-    <div class="stat"><div class="stat-num">${stats.itemsScanned}</div><div class="stat-label">Товаров</div></div>
-    <div class="stat"><div class="stat-num">${stats.kitsClosed}</div><div class="stat-label">Наборов закрыто</div></div>
-    <div class="stat"><div class="stat-num">${stats.kitsOpen}</div><div class="stat-label">Наборов в сборке</div></div>
-    <div class="stat"><div class="stat-num">${stats.boxesClosed}</div><div class="stat-label">Коробов</div></div>
-    <div class="stat"><div class="stat-num">${stats.palletsClosed}</div><div class="stat-label">Паллет</div></div>
-    <div class="stat"><div class="stat-num">${stats.kitsClosedToday}</div><div class="stat-label">Наборов сегодня</div></div>
-    <div class="stat"><div class="stat-num">${stats.activeStationsToday}</div><div class="stat-label">Станций сегодня</div></div>
-    <div class="stat"><div class="stat-num" style="color:${stats.errorsToday > 0 ? 'var(--err)' : 'var(--text)'}">${stats.errorsToday}</div><div class="stat-label">Ошибок сегодня</div></div>
-  `;
-}
-
-async function refreshTree() {
-  const q = (document.getElementById('search-input').value || '').trim();
-  const tree = await api(`/api/tree?q=${encodeURIComponent(q)}`);
-  const root = document.getElementById('tree-root');
-  if (tree.length === 0) {
-    root.innerHTML = `<div class="empty">${q ? 'Ничего не найдено по запросу.' : 'Пока пусто. Начните сканирование во вкладке «Сборка».'}</div>`;
-    return;
-  }
-  root.innerHTML = tree.map(nodeHtml).join('');
-}
-
-function nodeHtml(node) {
-  if (node.type === 'item') {
-    return `<div class="item-row">${escapeHtml(node.name)} — <span class="code">${escapeHtml(node.code)}</span></div>`;
-  }
-  const childrenHtml = (node.children || []).map(nodeHtml).join('');
-  if (node.type === 'kit') {
-    const openBadge = node.status === 'open' ? `<span class="badge open">в сборке ${node.items_count}/${node.items_required}</span>` : '';
-    return `<details class="kit"><summary>🧩 Набор «${escapeHtml(shortName(node.name))}» ${node.code ? `— <span class="code">${escapeHtml(node.code)}</span>` : ''} <span class="badge">станция ${escapeHtml(node.station_id)}</span>${openBadge}</summary>${childrenHtml}</details>`;
-  }
-  if (node.type === 'box') {
-    return `<details class="box"><summary>📦 Короб <span class="code">${escapeHtml(node.code)}</span> <span class="badge">${node.kits_count} наб.</span> <span class="badge">закрыт со станции ${escapeHtml(node.station_id)}</span></summary>${childrenHtml}</details>`;
-  }
-  if (node.type === 'pallet') {
-    return `<details class="pallet"><summary>🟧 Паллета <span class="code">${escapeHtml(node.code)}</span> <span class="badge">${node.boxes_count} короб.</span></summary>${childrenHtml}</details>`;
-  }
-  return '';
-}
-
-async function refreshControl() {
-  await refreshControlStats();
-  await refreshTree();
-}
-
-/* ============================================================
-   ВКЛАДКА ОТЧЁТ
-   ============================================================ */
-async function refreshReport() {
-  const data = await api('/api/report/preview?limit=300');
-  const body = document.getElementById('report-body');
-  const empty = document.getElementById('report-empty');
-  const countEl = document.getElementById('report-count');
-
-  if (data.rows.length === 0) {
-    body.innerHTML = '';
-    empty.style.display = 'block';
-    countEl.textContent = '';
-    return;
-  }
-  empty.style.display = 'none';
-  body.innerHTML = data.rows.map(r =>
-    `<tr><td>${escapeHtml(r.kit_agg_code)}</td><td>${r.kit_no == null ? '—' : escapeHtml(r.kit_no)}</td>` +
-    `<td>${escapeHtml(r.item_name)}</td><td>${escapeHtml(r.km_code)}</td></tr>`).join('');
-  countEl.textContent = data.total > data.rows.length
-    ? `Показаны последние ${data.rows.length} из ${data.total} строк. Полная выгрузка — кнопкой «Скачать CSV».`
-    : `Всего строк: ${data.total}.`;
-}
-
-document.getElementById('export-btn').addEventListener('click', () => {
-  window.location.href = '/api/export.csv';
-});
-
-/* ============================================================
-   НАВИГАЦИЯ
-   ============================================================ */
-document.querySelectorAll('.tab-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-    document.getElementById('view-' + btn.dataset.view).classList.add('active');
-    if (btn.dataset.view === 'control') refreshControl();
-    if (btn.dataset.view === 'report') refreshReport();
-  });
-});
-document.getElementById('tree-refresh').addEventListener('click', refreshTree);
-let searchDebounce;
-document.getElementById('search-input').addEventListener('input', () => {
-  clearTimeout(searchDebounce);
-  searchDebounce = setTimeout(refreshTree, 250);
-});
 
 init();

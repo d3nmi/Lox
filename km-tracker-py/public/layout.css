@@ -1,0 +1,42 @@
+/* ============================================================
+   Раскладка рабочего места: по центру, две колонки, без прокрутки
+   страницы на обычном мониторе/планшете. Подключается ПОСЛЕ основных
+   стилей и переопределяет их.
+   Слева — что делать (набор, поле скана, статус).
+   Справа — результат (чек-лист, счётчики, журнал).
+   ============================================================ */
+main, header, nav.tabs { max-width: 1180px; }
+main { padding-top: 16px; }
+header { padding-top: 14px; padding-bottom: 10px; }
+
+.consoles { max-width: none; margin: 0 auto; }
+
+.two-col { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 22px; align-items: start; }
+.col-left, .col-right { min-width: 0; }
+
+/* набор: компактный список с прокруткой внутри, а не всей страницей */
+.kit-picker { max-height: 190px; overflow-y: auto; margin-bottom: 16px; padding-right: 2px; grid-template-columns: 1fr; }
+
+/* поле скана и статус — главное на экране */
+input.scan-input { font-size: 19px; padding: 15px 16px; }
+.scan-hint {
+  font-size: 16px; font-weight: 500; line-height: 1.4; margin-top: 12px; min-height: 52px;
+  padding: 10px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface-2);
+}
+.scan-hint.ok  { color: var(--ok);  border-color: var(--ok);  background: var(--ok-dim); }
+.scan-hint.err { color: var(--err); border-color: var(--err); background: var(--err-dim); }
+
+/* галочка режима короба — второстепенный элемент */
+.box-toggle { display: flex; align-items: center; gap: 9px; margin-top: 18px; font-size: 13.5px; color: var(--text-dim); cursor: pointer; }
+.box-toggle input { width: 17px; height: 17px; accent-color: var(--accent); cursor: pointer; }
+
+/* чек-лист справа — всегда на виду */
+.checklist { margin-bottom: 14px; }
+.progress-row { margin-top: 0; gap: 14px; }
+.feed { margin-top: 14px; max-height: 170px; }
+
+/* планшет / узкий экран: одна колонка */
+@media (max-width: 900px) {
+  .two-col { grid-template-columns: 1fr; }
+  .kit-picker { max-height: 150px; }
+}

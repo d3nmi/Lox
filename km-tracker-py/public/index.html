@@ -9,58 +9,25 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   :root{
-    /* Фон и поверхности — спокойный графитово-синий, без чистого чёрного */
-    --bg:#14171C;
-    --surface:#1A1E24;
-    --surface-2:#20252C;
-    --surface-3:#2A3039;
-    --border:#333A44;
-
-    /* Текст */
-    --text:#EDEFF2;
-    --text-dim:#8E97A3;
-    --text-faint:#5B636F;
-
-    /* Единственный акцент — приглушённый стальной синий */
-    --accent:#6C97C2;
-    --accent-wash:#1C2733;
-
-    /* Служебные статусные цвета — приглушённые, не кислотные */
-    --ok:#4FAE7C;
-    --ok-dim:#1C2A22;
-    --err:#D9686C;
-    --err-dim:#332120;
-    --warn:#D8AB55;
-
+    --bg:#14171C; --surface:#1A1E24; --surface-2:#20252C; --surface-3:#2A3039; --border:#333A44;
+    --text:#EDEFF2; --text-dim:#8E97A3; --text-faint:#5B636F;
+    --accent:#6C97C2; --accent-wash:#1C2733;
+    --ok:#4FAE7C; --ok-dim:#1C2A22; --err:#D9686C; --err-dim:#332120; --warn:#D8AB55;
     --mono: 'JetBrains Mono', ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
     --sans: 'Inter', -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   }
   *{box-sizing:border-box;}
-  body{
-    margin:0; background:var(--bg); color:var(--text); font-family:var(--sans);
-    font-size:15px; line-height:1.55; min-height:100vh;
-    -webkit-font-smoothing:antialiased;
-  }
+  body{ margin:0; background:var(--bg); color:var(--text); font-family:var(--sans); font-size:15px; line-height:1.55; min-height:100vh; -webkit-font-smoothing:antialiased; }
   a, button, input, select{ font-family:inherit; }
   :focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
 
-  header{
-    padding:26px 28px 18px 28px; display:flex; justify-content:space-between; align-items:center;
-    flex-wrap:wrap; gap:12px; max-width:1320px; margin:0 auto;
-  }
+  header{ padding:26px 28px 18px 28px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; max-width:1320px; margin:0 auto; }
   h1{ font-size:22px; font-weight:600; letter-spacing:-.005em; margin:0; }
   .header-status{ display:flex; align-items:center; gap:12px; }
   .conn-status{ font-size:13px; color:var(--text-dim); display:flex; align-items:center; }
   .conn-dot{ display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--ok); margin-right:7px; transition:background-color .2s; }
   .conn-dot.down{ background:var(--err); }
 
-  nav.tabs{ display:flex; gap:4px; border-bottom:1px solid var(--border); padding:0 28px; max-width:1320px; margin:0 auto;}
-  nav.tabs button{
-    background:transparent; border:none; color:var(--text-dim); font-size:14.5px; padding:12px 16px;
-    cursor:pointer; border-bottom:2px solid transparent; font-weight:500;
-  }
-  nav.tabs button:hover{ color:var(--text); }
-  nav.tabs button.active{ color:var(--text); border-bottom-color:var(--accent); font-weight:600; }
   main{ padding:24px 28px 64px 28px; max-width:1320px; margin:0 auto;}
   .view{ display:none; }
   .view.active{ display:block; }
@@ -69,29 +36,14 @@
   .console{ background:var(--surface); border:1px solid var(--border); border-radius:10px; overflow:hidden; transition:border-color .15s;}
   .console.flash-err{ border-color:var(--err); }
   .console.flash-ok{ border-color:var(--ok); }
-  .console-head{
-    display:flex; align-items:center; justify-content:space-between; padding:14px 18px;
-    background:var(--surface-2); border-bottom:1px solid var(--border);
-  }
-  .station-badge{
-    font-family:var(--mono); font-size:12.5px; color:var(--text-dim); background:var(--surface-3);
-    border:1px solid var(--border); border-radius:6px; padding:5px 10px; cursor:pointer;
-  }
+  .console-head{ display:flex; align-items:center; justify-content:space-between; padding:14px 18px; background:var(--surface-2); border-bottom:1px solid var(--border); }
+  .station-badge{ font-family:var(--mono); font-size:12.5px; color:var(--text-dim); background:var(--surface-3); border:1px solid var(--border); border-radius:6px; padding:5px 10px; cursor:pointer; }
   .station-badge:hover{ border-color:var(--accent); color:var(--text); }
-  .station-modal-backdrop{
-    position:fixed; inset:0; background:rgba(10,12,15,.7); z-index:100;
-    display:flex; align-items:center; justify-content:center;
-  }
-  .station-modal{
-    background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:30px;
-    width:100%; max-width:400px;
-  }
+  .station-modal-backdrop{ position:fixed; inset:0; background:rgba(10,12,15,.7); z-index:100; display:flex; align-items:center; justify-content:center; }
+  .station-modal{ background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:30px; width:100%; max-width:400px; }
   .station-modal h2{ font-size:18px; font-weight:600; margin:0 0 8px 0;}
   .station-modal p{ color:var(--text-dim); font-size:14px; margin:0 0 18px 0; line-height:1.55;}
-  .station-modal input{
-    width:100%; background:var(--bg); border:1px solid var(--surface-3); color:var(--text);
-    font-family:var(--mono); font-size:15px; padding:12px 13px; border-radius:7px; outline:none; margin-bottom:16px;
-  }
+  .station-modal input{ width:100%; background:var(--bg); border:1px solid var(--surface-3); color:var(--text); font-family:var(--mono); font-size:15px; padding:12px 13px; border-radius:7px; outline:none; margin-bottom:16px; }
   .station-modal input:focus{ border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-wash);}
   .wh-title{ font-size:15px; font-weight:600; }
   .wh-dot{ display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--ok); margin-right:9px; }
@@ -99,13 +51,8 @@
 
   .section-label{ font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-dim); margin-bottom:9px; font-family:var(--mono);}
 
-  /* ---- выбор набора ---- */
   .kit-picker{ display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:8px; margin-bottom:20px; }
-  .kit-card{
-    text-align:left; background:var(--surface-2); border:1px solid var(--border); color:var(--text);
-    border-radius:8px; padding:10px 12px; cursor:pointer; display:flex; flex-direction:column; gap:3px;
-    font-size:13.5px; line-height:1.35;
-  }
+  .kit-card{ text-align:left; background:var(--surface-2); border:1px solid var(--border); color:var(--text); border-radius:8px; padding:10px 12px; cursor:pointer; display:flex; flex-direction:column; gap:3px; font-size:13.5px; line-height:1.35; }
   .kit-card:hover{ border-color:var(--accent); }
   .kit-card.active{ border-color:var(--accent); background:var(--accent-wash); box-shadow:0 0 0 1px var(--accent) inset; }
   .kit-card.auto{ border-style:dashed; }
@@ -115,17 +62,9 @@
   .kit-card-code{ font-family:var(--mono); font-size:12px; color:var(--text-dim); }
   .kit-card-note{ font-size:12px; color:var(--warn); }
 
-  /* ---- чек-лист состава ---- */
   .checklist{ display:flex; flex-direction:column; gap:5px; margin-bottom:18px; }
-  .check-row{
-    display:flex; align-items:center; gap:11px; padding:9px 12px; border-radius:7px;
-    background:var(--surface-2); border:1px solid var(--border); color:var(--text-dim);
-    transition:background-color .15s, border-color .15s, color .15s;
-  }
-  .check-mark{
-    width:20px; height:20px; border-radius:50%; flex-shrink:0; display:flex; align-items:center; justify-content:center;
-    background:var(--surface-3); border:1px solid var(--border); font-size:12px; font-weight:700; color:transparent;
-  }
+  .check-row{ display:flex; align-items:center; gap:11px; padding:9px 12px; border-radius:7px; background:var(--surface-2); border:1px solid var(--border); color:var(--text-dim); transition:background-color .15s, border-color .15s, color .15s; }
+  .check-mark{ width:20px; height:20px; border-radius:50%; flex-shrink:0; display:flex; align-items:center; justify-content:center; background:var(--surface-3); border:1px solid var(--border); font-size:12px; font-weight:700; color:transparent; }
   .check-name{ flex:1; font-size:14px; }
   .check-tag{ font-family:var(--mono); font-size:11px; padding:1px 6px; border-radius:4px; border:1px solid var(--border); color:var(--text-faint); }
   .check-count{ font-family:var(--mono); font-size:12.5px; min-width:30px; text-align:right; }
@@ -139,10 +78,7 @@
   .check-empty{ color:var(--text-dim); font-size:14px; padding:14px 4px; }
 
   .scan-input-row{ display:flex; gap:8px; }
-  input.scan-input{
-    flex:1; background:var(--bg); border:1px solid var(--surface-3); color:var(--text);
-    font-family:var(--mono); font-size:17px; padding:13px 14px; border-radius:8px; outline:none;
-  }
+  input.scan-input{ flex:1; background:var(--bg); border:1px solid var(--surface-3); color:var(--text); font-family:var(--mono); font-size:17px; padding:13px 14px; border-radius:8px; outline:none; }
   input.scan-input:focus{ border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-wash);}
   .scan-hint{ font-size:13.5px; color:var(--text-dim); margin-top:10px; min-height:18px;}
   .scan-hint.err{ color:var(--err); }
@@ -160,55 +96,17 @@
   .feed-line.error .feed-msg{ color:var(--err); }
   .feed-line.info .feed-msg{ color:var(--text-dim); }
 
-  .quickscan{ margin-top:18px; }
-  .quickscan-label{ font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-dim); margin-bottom:9px; font-family:var(--mono);}
-  .chip-row{ display:flex; flex-wrap:wrap; gap:7px; }
-  .chip{
-    background:var(--surface-2); border:1px solid var(--border); color:var(--text-dim);
-    font-family:var(--mono); font-size:12.5px; padding:7px 11px; border-radius:6px; cursor:pointer;
-  }
-  .chip:hover{ border-color:var(--accent); color:var(--text); }
-  .chip.danger:hover{ border-color:var(--err); color:var(--err); }
-  .chip.disabled:hover{ border-color:var(--border); color:var(--text-dim); }
 
-  .search-row{ display:flex; gap:8px; margin-bottom:20px; }
-  .search-row input{
-    flex:1; background:var(--surface); border:1px solid var(--border); color:var(--text);
-    font-family:var(--mono); font-size:14.5px; padding:11px 13px; border-radius:7px; outline:none;
-  }
-  .search-row input:focus{ border-color:var(--accent);}
-  .stat-strip{ display:flex; gap:12px; margin-bottom:20px; flex-wrap:wrap;}
-  .stat{ background:var(--surface); border:1px solid var(--border); border-radius:9px; padding:12px 18px; min-width:128px;}
-  .stat-num{ font-size:25px; font-weight:600; }
-  .stat-label{ font-size:12px; color:var(--text-dim); text-transform:uppercase; letter-spacing:.05em; margin-top:2px;}
 
-  .tree{ font-family:var(--mono); font-size:14px; }
-  details.pallet{ background:var(--surface); border:1px solid var(--border); border-radius:9px; margin-bottom:9px; padding:9px 13px;}
-  details.box{ background:var(--surface-2); border:1px solid var(--border); border-radius:7px; margin:7px 0; padding:7px 11px;}
-  details.kit{ background:var(--surface-3); border-radius:6px; margin:6px 0; padding:6px 10px;}
-  summary{ cursor:pointer; }
-  .code{ color:var(--accent); }
-  .item-row{ padding:4px 0 4px 15px; color:var(--text-dim); border-left:2px solid var(--border); margin-left:4px;}
   .badge{ font-size:11px; padding:2px 7px; border-radius:4px; background:var(--surface); border:1px solid var(--border); color:var(--text-dim); margin-left:7px;}
-  .badge.open{ background:var(--warn); border-color:var(--warn); color:#241c08; }
 
-  table.report{ width:100%; border-collapse:collapse; font-size:14px; }
-  table.report th{ text-align:left; padding:10px 11px; background:var(--surface-2); color:var(--text-dim); font-family:var(--mono); font-size:11.5px; text-transform:uppercase; letter-spacing:.05em; border-bottom:1px solid var(--border);}
-  table.report td{ padding:9px 11px; border-bottom:1px solid var(--border); font-family:var(--mono); font-size:13px; word-break:break-all;}
-  table.report tr:hover td{ background:var(--surface); }
-  .toolbar{ display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; gap:14px; flex-wrap:wrap;}
-  .btn{
-    background:var(--accent); color:#0F1720; border:none; font-weight:600;
-    font-size:14px; padding:10px 18px; border-radius:7px; cursor:pointer;
-  }
+  .btn{ background:var(--accent); color:#0F1720; border:none; font-weight:600; font-size:14px; padding:10px 18px; border-radius:7px; cursor:pointer; }
   .btn:hover{ filter:brightness(1.1); }
-  .btn.ghost{ background:transparent; border:1px solid var(--border); color:var(--text-dim); }
-  .btn.ghost:hover{ border-color:var(--text-dim); color:var(--text); }
 
   .empty{ color:var(--text-dim); font-size:14px; padding:34px 10px; text-align:center; }
   .note{ font-size:13.5px; color:var(--text-dim); margin-top:10px; line-height:1.6; }
-  .note b{ color:var(--text); font-weight:600; }
 </style>
+<link rel="stylesheet" href="layout.css">
 </head>
 <body>
 <header>
@@ -218,42 +116,11 @@
     <div class="conn-status" id="conn-status"><span class="conn-dot" id="conn-dot"></span><span id="conn-text">подключение…</span></div>
   </div>
 </header>
-<nav class="tabs">
-  <button class="tab-btn active" data-view="assembly">Сборка</button>
-  <button class="tab-btn" data-view="control">Контроль</button>
-  <button class="tab-btn" data-view="report">Отчёт для ТО</button>
-</nav>
 <main>
 
-  <!-- ===================== ASSEMBLY VIEW ===================== -->
+  <!-- ===================== СБОРКА ===================== -->
   <section id="view-assembly" class="view active">
     <div class="consoles" id="consoles-root"></div>
-  </section>
-
-  <!-- ===================== CONTROL VIEW ===================== -->
-  <section id="view-control" class="view">
-    <div class="stat-strip" id="stat-strip"></div>
-    <div class="search-row">
-      <input id="search-input" placeholder="Поиск по любому коду (товар / набор / короб / паллета)…">
-      <button class="btn ghost" id="tree-refresh">Обновить</button>
-    </div>
-    <div id="tree-root" class="tree"></div>
-  </section>
-
-  <!-- ===================== REPORT VIEW ===================== -->
-  <section id="view-report" class="view">
-    <div class="toolbar">
-      <div class="note" style="margin:0;">Формат выгрузки: <b>Код идентификации набора / Номер набора / Наименование товара / Код маркировки</b>. В выгрузку входят только товары с КМ из закрытых наборов (упаковка без КМ не входит). Номер набора — сквозной порядковый номер по порядку закрытия (1, 2, 3…), присваивается сразу при закрытии набора агрегационным кодом. Станция, время, короб и паллета хранятся во внутренней БД (вкладка «Контроль»).</div>
-      <div style="display:flex; gap:8px; flex-shrink:0;">
-        <button class="btn" id="export-btn">Скачать CSV</button>
-      </div>
-    </div>
-    <table class="report">
-      <thead><tr><th>Код идентификации набора</th><th>Номер набора</th><th>Наименование товара</th><th>Код маркировки</th></tr></thead>
-      <tbody id="report-body"></tbody>
-    </table>
-    <div id="report-empty" class="empty" style="display:none;">Пока нет закрытых наборов — отсканируйте хотя бы один комплект во вкладке «Сборка».</div>
-    <div class="note" id="report-count"></div>
   </section>
 
 </main>

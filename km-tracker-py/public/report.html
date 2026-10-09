@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Отчёт для ТО — КМ-трекинг</title>
+<style>
+  :root{ --bg:#14171C; --surface:#1A1E24; --surface-2:#20252C; --border:#333A44;
+    --text:#EDEFF2; --text-dim:#8E97A3; --accent:#6C97C2; --err:#D9686C;
+    --mono:ui-monospace,"SFMono-Regular",Consolas,Menlo,monospace;
+    --sans:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+  *{box-sizing:border-box;}
+  body{ margin:0; background:var(--bg); color:var(--text); font-family:var(--sans); font-size:15px; line-height:1.55; }
+  .wrap{ max-width:1100px; margin:0 auto; padding:24px 28px 64px; }
+  h1{ font-size:22px; font-weight:600; margin:0 0 6px; }
+  .note{ color:var(--text-dim); font-size:13.5px; margin:0 0 18px; }
+  .toolbar{ display:flex; gap:10px; align-items:center; margin-bottom:18px; flex-wrap:wrap; }
+  .btn{ background:var(--accent); color:#0F1720; border:none; font-weight:600; font-size:15px; padding:11px 22px; border-radius:7px; cursor:pointer; text-decoration:none; display:inline-block; }
+  .btn:hover{ filter:brightness(1.1); }
+  .btn.ghost{ background:transparent; border:1px solid var(--border); color:var(--text-dim); font-weight:500; }
+  table{ width:100%; border-collapse:collapse; }
+  th{ text-align:left; padding:10px 11px; background:var(--surface-2); color:var(--text-dim); font-size:12px; text-transform:uppercase; letter-spacing:.05em; border-bottom:1px solid var(--border); }
+  td{ padding:9px 11px; border-bottom:1px solid var(--border); font-family:var(--mono); font-size:13px; word-break:break-all; }
+  tr:hover td{ background:var(--surface); }
+  .table-wrap{ overflow-x:auto; }
+  .empty{ color:var(--text-dim); text-align:center; padding:34px 10px; }
+  #count{ color:var(--text-dim); font-size:13.5px; margin-top:10px; }
+  #err{ color:var(--err); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Отчёт для ТО</h1>
+  <p class="note">Формат выгрузки: Код идентификации набора / Номер набора / Наименование товара / Код маркировки.
+    В файл входят только товары с КМ из закрытых наборов.</p>
+  <div class="toolbar">
+    <a class="btn" href="/api/export.csv" id="dl">Скачать CSV</a>
+    <button class="btn ghost" id="refresh" type="button">Обновить таблицу</button>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Код идентификации набора</th><th>Номер набора</th><th>Наименование товара</th><th>Код маркировки</th></tr></thead>
+      <tbody id="body"></tbody>
+    </table>
+  </div>
+  <div id="empty" class="empty" style="display:none;">Пока нет закрытых наборов.</div>
+  <div id="count"></div>
+</div>
+<script>
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+async function load(){
+  const body=document.getElementById('body'), empty=document.getElementById('empty'), count=document.getElementById('count');
+  let data=null;
+  try{ const r=await fetch('/api/report/preview?limit=300'); if(r.ok) data=await r.json(); }catch(e){}
+  if(!data||!Array.isArray(data.rows)){
+    body.innerHTML=''; empty.style.display='none';
+    count.innerHTML='<span id="err">Не удалось загрузить отчёт. Нажмите «Обновить таблицу».</span>'; return;
+  }
+  if(!data.rows.length){ body.innerHTML=''; empty.style.display='block'; count.textContent=''; return; }
+  empty.style.display='none';
+  body.innerHTML=data.rows.map(r=>`<tr><td>${esc(r.kit_agg_code)}</td><td>${r.kit_no==null?'—':esc(r.kit_no)}</td><td>${esc(r.item_name)}</td><td>${esc(r.km_code)}</td></tr>`).join('');
+  count.textContent = data.total>data.rows.length
+    ? `Показаны последние ${data.rows.length} из ${data.total} строк. В файле CSV — все строки.`
+    : `Всего строк: ${data.total}.`;
+}
+document.getElementById('refresh').addEventListener('click',load);
+load();
+</script>
+</body>
+</html>

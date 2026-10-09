@@ -2,24 +2,33 @@
 # Локальный сервер учёта иерархии КМ — один склад, до 20 станций.
 # Этап 3 плана реализации, порт на Python/FastAPI/SQLite.
 # ============================================================
+import logging
 import re
 
 from fastapi import FastAPI, HTTPException, Response, Query
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .db import conn, init_db
 from .validation import process_scan, get_station_state, select_kit, set_station_settings, ensure_box_schema
 from .control import build_tree, search_code, get_stats
+from .station_stats import get_station_stats
 from .report import export_csv, report_rows, report_count, export_data_csv, export_data_rows, export_data_count
 from .backup import run_backup, schedule_backups, list_backups
 from .paths import resource_dir
+from .errors import install_error_handlers
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
+log = logging.getLogger("km")
 
 PUBLIC_DIR = resource_dir() / "public"
 
 STATION_ID_RE = re.compile(r'^[A-Za-zА-Яа-яЁё0-9_\- ]{1,64}$')
+MAX_CODE_LEN = 300   # реальные КМ — до ~130 символов; всё длиннее — явный мусор/ошибка ввода
 
 app = FastAPI(title="КМ-трекинг")
+install_error_handlers(app)   # пользователь не увидит traceback/SQL/пути (см. errors.py)
 
 # Инициализация и валидация БД — намеренно ВНЕ асинхронного startup-хука,
 # прямо на уровне импорта модуля. Если конфиг наборов битый, init_db()
@@ -57,8 +66,8 @@ def on_startup():
     schedule_backups(15)
     try:
         run_backup("startup")
-    except Exception as err:
-        print(f"[backup] ошибка при старте: {err}")
+    except Exception:
+        log.exception("Ошибка резервного копирования при старте")
 
 
 # ---------- служебное ----------
@@ -106,7 +115,12 @@ def station_settings(station_id: str, body: SettingsRequest):
 @app.post("/api/stations/{station_id}/scan")
 def scan(station_id: str, body: ScanRequest):
     station_id = _check_station_id(station_id)
-    result = process_scan(station_id, body.code)
+    if len(body.code) > MAX_CODE_LEN:
+        # слишком длинный ввод в БД и журнал не пишем
+        result = {'result': 'error', 'code_type': 'unknown',
+                  'message': 'Слишком длинный код — это не КМ. Очистите поле и отсканируйте код ещё раз.'}
+    else:
+        result = process_scan(station_id, body.code)
     result["state"] = get_station_state(station_id)
     return result
 
@@ -133,7 +147,28 @@ def stats():
     return get_stats()
 
 
+@app.get("/api/stats/stations")
+def stats_stations():
+    """Работа столов за сегодня: наборы, ошибки, скорость."""
+    return get_station_stats()
+
+
+# ---------- страница «Контроль» ----------
+# Отдельная страница со своей ссылкой (печатается при старте сервера);
+# в интерфейсе станций её нет.
+@app.get("/control", include_in_schema=False)
+def control_page():
+    return FileResponse(str(PUBLIC_DIR / "control.html"))
+
+
 # ---------- отчёт для ТО ----------
+# Отдельная страница со своей ссылкой (адрес печатается при старте сервера);
+# в основном интерфейсе станций её нет.
+@app.get("/report", include_in_schema=False)
+def report_page():
+    return FileResponse(str(PUBLIC_DIR / "report.html"))
+
+
 @app.get("/api/report/preview")
 def report_preview(limit: int = Query(default=200, ge=1, le=5000)):
     return {"rows": report_rows(limit), "total": report_count()}
@@ -171,8 +206,10 @@ def backup_now():
     try:
         path = run_backup("manual")
         return {"ok": True, "file": path.name}
-    except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err))
+    except Exception:
+        log.exception("Ошибка ручного резервного копирования")
+        # текст исключения (может содержать пути) наружу не отдаём
+        raise HTTPException(status_code=500, detail="Не удалось создать резервную копию. Подробности — в окне сервера.")
 
 
 @app.get("/api/backups")
