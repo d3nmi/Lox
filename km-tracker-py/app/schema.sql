@@ -2,32 +2,45 @@
 -- Схема БД: иерархия КМ (товар -> комплект -> короб -> паллета)
 -- Один склад, до 20 одновременных станций.
 --
--- Ключевое отличие от многоскладской версии: "открытый набор" — это
--- состояние КОНКРЕТНОЙ СТАНЦИИ (station_id), не склада. Каждая станция
--- ведёт свой набор независимо от остальных 19. Короб и паллета — общий
--- пул на весь склад: закрытие короба забирает все закрытые-но-неупакованные
--- наборы от ЛЮБЫХ станций, а не только от той, что скана��ирует агрегат короба.
+-- "Открытый набор" — состояние КОНКРЕТНОЙ СТАНЦИИ (station_id). Каждая
+-- станция ведёт свой набор независимо от остальных. Короб и паллета —
+-- общий пул склада.
+--
+-- Справочник наборов (kit_templates / kit_template_items) НЕ хранит
+-- ничего своего: при каждом старте сервера эти две таблицы пересоздаются
+-- из app/config/kit-templates.json (см. db.py), на них нет внешних ключей
+-- из рабочих таблиц — поэтому правка конфига не затрагивает отсканированные данные.
 -- ============================================================
 
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 
--- Справочник шаблонов комплектов (какие товары входят в комплект)
+-- Справочник наборов (пересоздаётся из конфига при старте)
 CREATE TABLE IF NOT EXISTS kit_templates (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  kit_sku     TEXT NOT NULL UNIQUE,   -- GTIN комплекта (агрегата)
+  kit_code    TEXT NOT NULL UNIQUE,   -- артикул набора (по нему выбирают набор)
+  kit_sku     TEXT,                   -- GTIN набора (агрегата); может быть NULL
   kit_name    TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS kit_template_items (
   id               INTEGER PRIMARY KEY AUTOINCREMENT,
   kit_template_id  INTEGER NOT NULL REFERENCES kit_templates(id) ON DELETE CASCADE,
-  item_sku         TEXT NOT NULL,     -- GTIN товара
+  item_code        TEXT NOT NULL,     -- артикул товара
+  item_sku         TEXT,              -- GTIN товара; может быть NULL (набор тогда нельзя выбрать)
   item_name        TEXT NOT NULL,
-  qty_required     INTEGER NOT NULL DEFAULT 1
+  qty_required     INTEGER NOT NULL DEFAULT 1,
+  marked           INTEGER NOT NULL DEFAULT 1  -- 1 = товар с КМ, 0 = упаковка без КМ
 );
 CREATE INDEX IF NOT EXISTS idx_kti_template ON kit_template_items(kit_template_id);
 CREATE INDEX IF NOT EXISTS idx_kti_sku ON kit_template_items(item_sku);
+
+-- Какой набор выбран на станции (запоминается между перезагрузками страницы)
+CREATE TABLE IF NOT EXISTS station_selection (
+  station_id  TEXT PRIMARY KEY,
+  kit_code    TEXT NOT NULL,
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
 
 -- Паллеты — общий пул склада, без привязки к станции
 CREATE TABLE IF NOT EXISTS pallets (
@@ -58,7 +71,7 @@ CREATE INDEX IF NOT EXISTS idx_boxes_pallet ON boxes(pallet_id);
 -- Комплекты (наборы) — у каждого своя станция-владелец, пока набор открыт
 CREATE TABLE IF NOT EXISTS kits (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,
-  kit_sku        TEXT NOT NULL,
+  kit_sku        TEXT NOT NULL,        -- GTIN набора ('' если в справочнике не задан)
   kit_name       TEXT NOT NULL,
   km_agg_code    TEXT UNIQUE,          -- заполняется при закрытии комплекта
   station_id     TEXT NOT NULL,
@@ -68,30 +81,29 @@ CREATE TABLE IF NOT EXISTS kits (
   items_required INTEGER NOT NULL DEFAULT 0,
   scan_order     INTEGER,
   opened_at      TEXT,
-  closed_at      TEXT
+  closed_at      TEXT,
+  kit_code       TEXT                  -- артикул набора из справочника (добавлено позже, см. db._migrate)
 );
 CREATE INDEX IF NOT EXISTS idx_kits_box ON kits(box_id);
 CREATE INDEX IF NOT EXISTS idx_kits_station_status ON kits(station_id, status);
 
--- Товары (единичные КМ)
+-- Товары (единичные КМ и упаковка без КМ)
 CREATE TABLE IF NOT EXISTS items (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
-  km_code      TEXT NOT NULL UNIQUE,
+  km_code      TEXT NOT NULL UNIQUE,   -- для упаковки без КМ: "<штрихкод>#<n>" (уникальность служебная)
   item_sku     TEXT NOT NULL,
   item_name    TEXT NOT NULL,
   kit_id       INTEGER NOT NULL REFERENCES kits(id) ON DELETE CASCADE,
   station_id   TEXT NOT NULL,
-  scanned_at   TEXT NOT NULL
+  scanned_at   TEXT NOT NULL,
+  marked       INTEGER NOT NULL DEFAULT 1   -- 1 = КМ (идёт в выгрузку), 0 = без КМ
 );
 CREATE INDEX IF NOT EXISTS idx_items_kit ON items(kit_id);
 CREATE INDEX IF NOT EXISTS idx_items_code ON items(km_code);
 
--- Отдельная выгрузка: набор / вложение / короб (Этап 4.3+), не зависит
--- от items/kits/boxes при чтении. По строке на каждое вложение появляется
--- в момент закрытия набора; km_box_code сперва NULL — наполняемость короба
--- наборами становится известна позже, при закрытии короба
--- (см. validation.py: _handle_item_or_kit_agg заполняет строку,
--- _close_box дозаполняет km_box_code).
+-- Отдельная выгрузка: набор / вложение / короб, не зависит от items/kits/boxes
+-- при чтении. Строки появляются в момент закрытия набора (только товары с КМ);
+-- km_box_code сперва NULL и дозаполняется при добавлении набора в короб.
 CREATE TABLE IF NOT EXISTS export_data (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   kit_id        INTEGER NOT NULL REFERENCES kits(id) ON DELETE CASCADE,
@@ -112,8 +124,6 @@ CREATE TABLE IF NOT EXISTS scan_log (
   message       TEXT NOT NULL,
   created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
--- Составной индекс покрывает и фильтр по станции, и сортировку ленты по id —
--- без него SQLite делает TEMP B-TREE на всю историю станции при каждом опросе.
 CREATE INDEX IF NOT EXISTS idx_scanlog_station_id ON scan_log(station_id, id);
 CREATE INDEX IF NOT EXISTS idx_scanlog_time ON scan_log(created_at);
 
@@ -124,7 +134,7 @@ CREATE TABLE IF NOT EXISTS scan_seq (
 );
 INSERT OR IGNORE INTO scan_seq (id, val) VALUES (1, 0);
 
--- Быстрая проверка глобальной уникальности ЛЮБОГО отсканированного кода
+-- Быстрая проверка глобальной уникальности отсканированных GS1-кодов
 CREATE TABLE IF NOT EXISTS used_codes (
   code         TEXT PRIMARY KEY,
   code_type    TEXT NOT NULL,
@@ -132,6 +142,5 @@ CREATE TABLE IF NOT EXISTS used_codes (
   used_at      TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 
--- Гарантия на уровне БД: не более одного ОТКРЫТОГО набора НА СТАНЦИЮ
--- одновременно (не на склад — иначе 20 станций мешали бы друг другу).
+-- Не более одного ОТКРЫТОГО набора НА СТАНЦИЮ одновременно.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_open_kit_per_station ON kits(station_id) WHERE status = 'open';

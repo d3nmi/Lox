@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .db import conn, init_db
-from .validation import process_scan, get_station_state
+from .validation import process_scan, get_station_state, select_kit, set_station_settings, ensure_box_schema
 from .control import build_tree, search_code, get_stats
 from .report import export_csv, report_rows, report_count, export_data_csv, export_data_rows, export_data_count
 from .backup import run_backup, schedule_backups, list_backups
@@ -27,6 +27,7 @@ app = FastAPI(title="КМ-трекинг")
 # ASGI/lifespan — иначе SystemExit из хука startup оборачивается Starlette
 # в пугающий async-трейсбек поверх и без того понятного сообщения об ошибке.
 init_db()
+ensure_box_schema()  # настройки станции (режим «Код короба») и kits.box_no — см. validation.py
 
 
 def _check_station_id(station_id: str) -> str:
@@ -41,6 +42,14 @@ def _check_station_id(station_id: str) -> str:
 
 class ScanRequest(BaseModel):
     code: str = ""
+
+
+class SelectKitRequest(BaseModel):
+    kit_code: str = ""
+
+
+class SettingsRequest(BaseModel):
+    require_box: bool = False
 
 
 @app.on_event("startup")
@@ -61,19 +70,39 @@ def health():
 
 @app.get("/api/templates")
 def templates():
+    """Справочник наборов для выбора на станции. ready=false — в конфиге у набора
+    остались позиции без GTIN, выбрать такой набор нельзя (missing — какие именно)."""
     rows = conn.execute("SELECT * FROM kit_templates ORDER BY id").fetchall()
     result = []
     for t in rows:
         items = conn.execute(
-            "SELECT * FROM kit_template_items WHERE kit_template_id=?", (t["id"],)
+            "SELECT * FROM kit_template_items WHERE kit_template_id=? ORDER BY id", (t["id"],)
         ).fetchall()
         d = dict(t)
-        d["items"] = [dict(i) for i in items]
+        d["items"] = [dict(i, marked=bool(i["marked"])) for i in items]
+        d["missing"] = [i["item_name"] for i in items if not i["item_sku"]]
+        d["ready"] = not d["missing"]
         result.append(d)
     return result
 
 
 # ---------- приём сканов (рабочее место станции) ----------
+@app.post("/api/stations/{station_id}/select-kit")
+def choose_kit(station_id: str, body: SelectKitRequest):
+    station_id = _check_station_id(station_id)
+    result = select_kit(station_id, body.kit_code)
+    result["state"] = get_station_state(station_id)
+    return result
+
+
+@app.post("/api/stations/{station_id}/settings")
+def station_settings(station_id: str, body: SettingsRequest):
+    station_id = _check_station_id(station_id)
+    result = set_station_settings(station_id, body.require_box)
+    result["state"] = get_station_state(station_id)
+    return result
+
+
 @app.post("/api/stations/{station_id}/scan")
 def scan(station_id: str, body: ScanRequest):
     station_id = _check_station_id(station_id)
@@ -121,9 +150,6 @@ def export():
 
 
 # ---------- отдельная выгрузка: набор / вложение / короб ----------
-# Источник — таблица export_data (см. schema.sql и validation.py): код
-# короба в строках заполняется не сразу, а когда короб закрывается и
-# становится известна его наполняемость наборами.
 @app.get("/api/export-data/preview")
 def export_data_preview(limit: int = Query(default=200, ge=1, le=5000)):
     return {"rows": export_data_rows(limit), "total": export_data_count()}

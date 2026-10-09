@@ -7,14 +7,23 @@
    ID станции запрашивается один раз и хранится в localStorage этого
    браузера — сервер использует его, чтобы не путать наборы разных
    станций между собой (см. app/validation.py).
+
+   Порядок работы оператора: выбрать набор в списке → сканировать состав
+   (позиции в чек-листе из серых становятся зелёными) → агрегационный код набора.
+   Дальше — по галочке «Код короба» (хранится на сервере для станции):
+     включена  → после агрегационного кода сканируется код короба DTV…;
+     выключена → набор закрывается автоматически, короб сканировать не нужно.
+   Номер набора в отчёте присваивается сразу при закрытии набора.
+   Выбор набора хранится на сервере и сохраняется после закрытия набора.
    ============================================================ */
 const API = '';
 const STATION_KEY = 'km_station_id';
+const FAKE_AGG_GTIN = '09999999999990'; // для тестовой кнопки агрегата набора без GTIN в справочнике
 
 let STATION_ID = null;
-let templates = [];        // [{id, kit_sku, kit_name, items:[...]}]
+let templates = [];        // [{kit_code, kit_sku, kit_name, ready, missing, items:[...]}]
 let stationState = null;   // последний известный state с сервера
-let lastAcceptedCode = null; // код последнего УСПЕШНОГО скана (для демо-повтора дубля)
+let lastAcceptedCode = null; // код последнего УСПЕШНОГО скана GS1 (для демо-повтора дубля)
 
 /* ---------- утилиты ---------- */
 function shortName(name) { return (name || '').split(':')[0]; }
@@ -31,7 +40,7 @@ function rndBoxCode() {
   return `DTV${digits}`;
 }
 function escapeHtml(s) {
-  return String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 function beepError() {
   try {
@@ -149,8 +158,43 @@ async function pollState() {
 }
 
 /* ============================================================
-   СКАНИРОВАНИЕ
+   ВЫБОР НАБОРА, РЕЖИМ «КОД КОРОБА» И СКАНИРОВАНИЕ
    ============================================================ */
+async function selectKit(kitCode) {
+  let resp;
+  try {
+    resp = await api(`/api/stations/${encodeURIComponent(STATION_ID)}/select-kit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kit_code: kitCode })
+    });
+  } catch (e) {
+    setConn(false);
+    return;
+  }
+  stationState = resp.state;
+  renderConsole({
+    lastEvent: resp.result === 'error' ? { result: 'error', message: resp.message } : undefined,
+    focusInput: true
+  });
+}
+
+async function setRequireBox(on) {
+  let resp;
+  try {
+    resp = await api(`/api/stations/${encodeURIComponent(STATION_ID)}/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ require_box: !!on })
+    });
+  } catch (e) {
+    setConn(false);
+    return;
+  }
+  stationState = resp.state;
+  renderConsole({ focusInput: true });
+}
+
 async function submitScan(code, opts = {}) {
   code = (code || '').trim();
   if (!code) return;
@@ -166,16 +210,19 @@ async function submitScan(code, opts = {}) {
     return;
   }
   stationState = resp.state;
-  if (resp.result === 'ok') lastAcceptedCode = code;
+  if (resp.result === 'ok' && /^01\d{14}/.test(code)) lastAcceptedCode = code;
   renderConsole({
-    lastEvent: { result: resp.result, message: resp.message },
+    lastEvent: { result: resp.result, message: resp.message, code_type: resp.code_type },
     focusInput: opts.focusInput !== false
   });
+  const el = document.getElementById('console-root');
   if (resp.result === 'error') {
-    const el = document.getElementById('console-root');
     el.classList.add('flash-err');
     setTimeout(() => el.classList.remove('flash-err'), 350);
     beepError();
+  } else if (resp.code_type === 'kit_agg') {
+    el.classList.add('flash-ok');
+    setTimeout(() => el.classList.remove('flash-ok'), 700);
   }
   refreshControlStats(); // счётчики держим свежими постоянно, дерево — по запросу
 }
@@ -187,7 +234,8 @@ async function submitScan(code, opts = {}) {
    пересоздаётся — иначе пересборка DOM могла бы попасть в момент,
    когда USB-сканер ещё дописывает код в поле, и часть ввода терялась
    бы вместе с удалённым узлом. Дальнейшие рендеры обновляют только
-   текст/классы конкретных под-элементов по id.
+   содержимое конкретных под-элементов по id (список наборов, чек-лист,
+   ленту), сам <input> не трогается.
    ============================================================ */
 function ensureConsoleSkeleton() {
   const root = document.getElementById('console-root');
@@ -199,16 +247,24 @@ function ensureConsoleSkeleton() {
       <span class="badge" id="badge-collected">наборов собрано: 0</span>
     </div>
     <div class="console-body">
+      <label id="box-toggle" style="display:flex;align-items:center;gap:9px;margin-bottom:16px;cursor:pointer;font-size:14px;"
+             title="Включено: в конце набора сканируется код короба DTV… Выключено: набор закрывается автоматически">
+        <input type="checkbox" id="chk-require-box" style="width:17px;height:17px;accent-color:var(--accent);cursor:pointer;">
+        <span>Код короба <span style="color:var(--text-dim);font-size:12.5px;">— сканировать в конце набора (DTV…)</span></span>
+      </label>
+
+      <div class="section-label">Набор для сборки (авто — по КМ, либо выбрать вручную)</div>
+      <div class="kit-picker" id="kit-picker"></div>
+
+      <div class="section-label" id="checklist-label">Что нужно отсканировать</div>
+      <div class="checklist" id="checklist"></div>
+
       <div class="scan-input-row">
         <input class="scan-input" id="input-station" placeholder="Скан → сюда (отправится автоматически)" autocomplete="off">
       </div>
       <div class="scan-hint" id="hint-station"></div>
 
       <div class="progress-row">
-        <div class="progress-block">
-          <div class="progress-label" id="kitlabel-station">Текущий набор</div>
-          <div class="dots" id="dots-station"></div>
-        </div>
         <div class="progress-block">
           <div class="progress-label">Короб (общий пул склада)</div>
           <div class="count-badge" id="boxcount-station"></div>
@@ -227,6 +283,22 @@ function ensureConsoleSkeleton() {
       <div class="feed" id="feed-station"></div>
     </div>
   `;
+
+  // Галочка «Код короба» — сохраняется на сервере для этой станции
+  root.querySelector('#chk-require-box').addEventListener('change', (e) => setRequireBox(e.target.checked));
+
+  // Выбор набора — делегирование клика (карточки перерисовываются при каждом опросе)
+  root.querySelector('#kit-picker').addEventListener('click', (e) => {
+    const card = e.target.closest('.kit-card');
+    if (!card) return;
+    if (card.classList.contains('disabled')) {
+      renderConsole({ lastEvent: { result: 'error', message: card.dataset.reason || 'Этот набор сейчас выбрать нельзя' }, focusInput: true });
+      return;
+    }
+    if (card.classList.contains('active') || card.classList.contains('detected')) { renderConsole({ focusInput: true }); return; }
+    selectKit(card.dataset.code);
+  });
+
   const input = root.querySelector('.scan-input');
 
   // Автоотправка скана без ручного подтверждения оператором:
@@ -273,22 +345,114 @@ function ensureConsoleSkeleton() {
   return root;
 }
 
+function renderKitPicker() {
+  const picker = document.getElementById('kit-picker');
+  if (!picker) return;
+  const s = stationState;
+  const sel = s.selectedKit;
+  const auto = s.mode === 'auto';
+  const locked = !!(s.currentKit && !s.currentKit.pending);
+  const detectedCode = (auto && locked && sel) ? sel.kit_code : null;
+
+  const autoCard =
+    `<div class="kit-card auto${auto ? ' active' : ''}" role="button" data-code="auto" title="Набор определяется по первому отсканированному КМ">` +
+    `<span class="kit-card-code">АВТО</span><span>Определять набор по сканированию КМ</span>` +
+    (detectedCode ? '<span class="kit-card-note">набор определён — см. ниже</span>' : '') +
+    `</div>`;
+
+  const cards = templates.map(t => {
+    const pinned = !auto && !!sel && sel.kit_code === t.kit_code;
+    const detected = detectedCode === t.kit_code;
+    let reason = '';
+    if (!t.ready) reason = `Набор пока нельзя собирать — в справочнике не заполнены GTIN (${t.missing.length} поз.)`;
+    else if (locked && !pinned && !detected) reason = 'Сначала завершите набор, который уже начат на этой станции';
+    const disabled = !!reason;
+    return `<div class="kit-card${pinned ? ' active' : ''}${detected ? ' detected' : ''}${disabled ? ' disabled' : ''}" role="button" data-code="${escapeHtml(t.kit_code)}"` +
+      ` data-reason="${escapeHtml(reason)}" title="${escapeHtml(reason)}">` +
+      `<span class="kit-card-code">${escapeHtml(t.kit_code)}${detected ? ' · определён' : ''}</span>` +
+      `<span>${escapeHtml(t.kit_name)}</span>` +
+      (!t.ready ? '<span class="kit-card-note">нет GTIN в справочнике</span>' : '') +
+      `</div>`;
+  }).join('');
+  picker.innerHTML = autoCard + (cards || '<div class="check-empty">Справочник наборов пуст</div>');
+}
+
+function renderChecklist() {
+  const el = document.getElementById('checklist');
+  const label = document.getElementById('checklist-label');
+  if (!el) return;
+  const s = stationState;
+  const sel = s.selectedKit;
+
+  // набор ещё не определён: показываем принятое и варианты
+  if (s.pending) {
+    label.textContent = 'Набор определяется по сканированию';
+    const rows = s.pending.scanned.map(it =>
+      `<div class="check-row done"><span class="check-mark">✓</span><span class="check-name">${escapeHtml(it.item_name)}</span>` +
+      `<span class="check-tag">${it.marked ? 'КМ' : 'ШК'}</span><span class="check-count"></span></div>`);
+    const cands = s.pending.candidates.map(c => escapeHtml(c.kit_name)).join('<br>');
+    rows.push(`<div class="check-empty">Эта позиция входит в несколько наборов. Отсканируйте следующую — набор определится сам.<br><br>Возможные наборы:<br>${cands}</div>`);
+    el.innerHTML = rows.join('');
+    return;
+  }
+
+  if (!sel) {
+    label.textContent = 'Что нужно отсканировать';
+    el.innerHTML = '<div class="check-empty">Отсканируйте КМ любого товара — набор определится автоматически. ' +
+      'Либо выберите набор вручную в списке выше.</div>';
+    return;
+  }
+  label.textContent = 'Что нужно отсканировать · ' + sel.kit_name;
+  const rows = (s.checklist || []).map(it => {
+    const done = it.scanned >= it.required;
+    const partial = !done && it.scanned > 0;
+    return `<div class="check-row${done ? ' done' : ''}${partial ? ' partial' : ''}">` +
+      `<span class="check-mark">${done ? '✓' : ''}</span>` +
+      `<span class="check-name">${escapeHtml(it.item_name)}</span>` +
+      `<span class="check-tag" title="${it.marked ? 'Товар с кодом маркировки' : 'Упаковка без КМ — штрихкод или артикул'}">${it.marked ? 'КМ' : 'ШК'}</span>` +
+      `<span class="check-count">${it.scanned}/${it.required}</span>` +
+      `</div>`;
+  });
+  rows.push(
+    `<div class="check-row agg${sel.agg_ready ? ' ready' : ''}">` +
+    `<span class="check-mark"></span>` +
+    `<span class="check-name">Агрегационный код набора</span>` +
+    `<span class="check-tag">КМ</span><span class="check-count"></span></div>`
+  );
+  if (s.requireBox) {
+    rows.push(
+      `<div class="check-row agg${s.awaitingBox ? ' ready' : ''}">` +
+      `<span class="check-mark"></span>` +
+      `<span class="check-name">Код короба</span>` +
+      `<span class="check-tag">DTV</span><span class="check-count"></span></div>`
+    );
+  }
+  el.innerHTML = rows.join('');
+}
+
 function renderConsole(opts = {}) {
   const { lastEvent, focusInput } = opts;
   const s = stationState;
   if (!s) return;
   ensureConsoleSkeleton();
 
-  const k = s.currentKit;
-  let hint = 'Отсканируйте первый товар набора';
-  let hintClass = '';
-  if (k && k.items_count < k.items_required) { hint = `Отсканируйте ещё товар (${k.items_count}/${k.items_required})`; }
-  else if (k && k.items_count === k.items_required) { hint = 'Состав полон — отсканируйте агрегационный код набора'; hintClass = 'ok'; }
-  else if (!k && s.kitsInBox > 0) { hint = 'Можно начать новый набор, либо (с любой станции) закрыть короб'; }
-  if (lastEvent && lastEvent.result === 'error') { hint = lastEvent.message; hintClass = 'err'; }
+  const chk = document.getElementById('chk-require-box');
+  if (chk) chk.checked = !!s.requireBox;
 
-  const kitDots = k ? Array.from({ length: k.items_required }).map((_, i) =>
-    `<span class="dot ${i < k.items_count ? 'filled' : ''}"></span>`).join('') : '';
+  const k = s.currentKit;
+  const sel = s.selectedKit;
+  const left = (s.checklist || []).reduce((n, it) => n + Math.max(0, it.required - it.scanned), 0);
+  let hint;
+  let hintClass = '';
+  if (s.pending) { hint = 'Набор определится по следующей позиции — отсканируйте КМ следующего товара'; }
+  else if (s.awaitingBox) { hint = 'Набор закрыт — отсканируйте код короба (DTV…), затем можно начинать следующий'; hintClass = 'ok'; }
+  else if (!k) {
+    hint = sel ? 'Отсканируйте любую позицию набора' : 'Отсканируйте КМ любого товара — набор определится автоматически';
+  }
+  else if (k.items_count < k.items_required) { hint = `Осталось отсканировать позиций: ${left}`; }
+  else { hint = 'Состав полон — отсканируйте агрегационный код набора'; hintClass = 'ok'; }
+  if (lastEvent && lastEvent.result === 'error') { hint = lastEvent.message; hintClass = 'err'; }
+  else if (lastEvent && lastEvent.result === 'ok' && lastEvent.code_type === 'kit_agg') { hint = lastEvent.message; hintClass = 'ok'; }
 
   document.getElementById('badge-collected').textContent = `наборов собрано: ${s.kitsAssembled}`;
 
@@ -296,12 +460,13 @@ function renderConsole(opts = {}) {
   hintEl.textContent = hint;
   hintEl.className = `scan-hint ${hintClass}`;
 
-  document.getElementById('kitlabel-station').textContent = 'Текущий набор' + (k ? ' · ' + shortName(k.kit_name) : '');
-  document.getElementById('dots-station').innerHTML = kitDots || '<span class="count-badge">— не начат —</span>';
+  renderKitPicker();
+  renderChecklist();
+
   document.getElementById('boxcount-station').textContent = `${s.kitsInBox} наборов в пуле`;
   document.getElementById('palletcount-station').textContent = `${s.boxesOnPallet} коробов в пуле`;
 
-  renderChips(k);
+  renderChips();
 
   const feedEl = document.getElementById('feed-station');
   feedEl.innerHTML = (s.feed || []).map(f => `
@@ -309,7 +474,7 @@ function renderConsole(opts = {}) {
       <span class="feed-time">${fmtTime(f.t)}</span><span class="feed-msg">${escapeHtml(f.message)}</span>
     </div>`).join('') || '<div class="feed-line info"><span class="feed-msg">Событий пока нет</span></div>';
 
-  // Фокус переставляем ТОЛЬКО по осознанному действию (см. submitScan/init),
+  // Фокус переставляем ТОЛЬКО по осознанному действию (см. submitScan/selectKit/init),
   // а не на каждом фоновом опросе — иначе он бы дёргался у оператора из-под курсора.
   if (focusInput) {
     const input = document.getElementById('input-station');
@@ -317,7 +482,7 @@ function renderConsole(opts = {}) {
   }
 }
 
-function renderChips(currentKit) {
+function renderChips() {
   const chipRow = document.getElementById('chips-station');
   if (!chipRow) return;
   chipRow.innerHTML = ''; // родитель персистентный — очистка перед перестройкой обязательна
@@ -331,23 +496,38 @@ function renderChips(currentKit) {
     return code;
   };
 
-  if (currentKit) {
-    if (currentKit.items_count < currentKit.items_required) {
-      const tpl = templates.find(t => t.kit_sku === currentKit.kit_sku);
-      if (tpl) {
-        const scannedCounts = {};
-        (currentKit.items || []).forEach(it => { scannedCounts[it.item_sku] = (scannedCounts[it.item_sku] || 0) + 1; });
-        tpl.items
-          .filter(it => (scannedCounts[it.item_sku] || 0) < it.qty_required)
-          .forEach(it => addChip(`Товар: ${shortName(it.item_name)}`, `01${it.item_sku}21${rndSerial()}`));
-      }
-    } else {
-      const tpl = templates.find(t => t.kit_sku === currentKit.kit_sku);
-      if (tpl) addChip(`Агрегат набора «${shortName(tpl.kit_name)}»`, `01${tpl.kit_sku}21${rndSerial()}`);
-    }
+  const s = stationState;
+  const sel = s.selectedKit;
+  const readyTpls = templates.filter(t => t.ready);
+
+  // Из каких наборов предлагать тестовые коды: выбранный/определённый → он один;
+  // набор определяется → варианты; иначе (авто, пусто) → все наборы справочника.
+  let pool = readyTpls;
+  if (s.pending) {
+    const codes = s.pending.candidates.map(c => c.kit_code);
+    pool = readyTpls.filter(t => codes.includes(t.kit_code));
+  } else if (sel) {
+    pool = readyTpls.filter(t => t.kit_code === sel.kit_code);
+  }
+
+  const scannedBySku = {};
+  ((s.currentKit && s.currentKit.items) || []).forEach(it => { scannedBySku[it.item_sku] = (scannedBySku[it.item_sku] || 0) + 1; });
+
+  if (s.awaitingBox) {
+    // набор закрыт, ждём код короба — тестовых кнопок товаров не нужно
+  } else if (sel && sel.agg_ready) {
+    const tpl = pool[0];
+    if (tpl) addChip(`Агрегат набора «${tpl.kit_name}»`, `01${tpl.kit_sku || FAKE_AGG_GTIN}21${rndSerial()}`);
   } else {
-    templates.forEach(tpl => {
-      addChip(`Начать: ${shortName(tpl.kit_name)}`, `01${tpl.items[0].item_sku}21${rndSerial()}`);
+    const seen = new Set();
+    pool.forEach(tpl => {
+      tpl.items.forEach(it => {
+        if (seen.has(it.item_sku)) return;       // один и тот же товар в нескольких наборах — одна кнопка
+        seen.add(it.item_sku);
+        if ((scannedBySku[it.item_sku] || 0) >= it.qty_required) return;
+        if (it.marked) addChip(`КМ: ${it.item_name}`, `01${it.item_sku}21${rndSerial()}`);
+        else addChip(`Упаковка: ${it.item_name}`, it.item_sku.replace(/^0/, ''));
+      });
     });
   }
   addChip('Код короба', rndBoxCode());
@@ -355,12 +535,12 @@ function renderChips(currentKit) {
 
   const dupChip = document.createElement('div');
   dupChip.className = 'chip danger' + (lastAcceptedCode ? '' : ' disabled');
-  dupChip.textContent = '⚠ повторить последний ПРИНЯТЫЙ код (дубль)';
+  dupChip.textContent = '⚠ повторить последний ПРИНЯТЫЙ КМ (дубль)';
   if (lastAcceptedCode) {
     dupChip.title = lastAcceptedCode;
     dupChip.onclick = () => submitScan(lastAcceptedCode);
   } else {
-    dupChip.title = 'Пока нечего повторять — не было ни одного успешного скана';
+    dupChip.title = 'Пока нечего повторять — не было ни одного успешного скана КМ';
     dupChip.style.opacity = '0.4';
     dupChip.style.cursor = 'default';
   }
@@ -435,7 +615,9 @@ async function refreshReport() {
     return;
   }
   empty.style.display = 'none';
-  body.innerHTML = data.rows.map(r => `<tr><td>${escapeHtml(r.kit_name)}</td><td>${escapeHtml(r.kit_agg_code)}</td><td>${escapeHtml(r.item_name)}</td><td>${escapeHtml(r.km_code)}</td></tr>`).join('');
+  body.innerHTML = data.rows.map(r =>
+    `<tr><td>${escapeHtml(r.kit_agg_code)}</td><td>${r.kit_no == null ? '—' : escapeHtml(r.kit_no)}</td>` +
+    `<td>${escapeHtml(r.item_name)}</td><td>${escapeHtml(r.km_code)}</td></tr>`).join('');
   countEl.textContent = data.total > data.rows.length
     ? `Показаны последние ${data.rows.length} из ${data.total} строк. Полная выгрузка — кнопкой «Скачать CSV».`
     : `Всего строк: ${data.total}.`;

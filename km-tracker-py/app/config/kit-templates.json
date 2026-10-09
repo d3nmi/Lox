@@ -1,18 +1,40 @@
 [
   {
-    "kit_sku": "08056860397516",
-    "kit_name": "Подарочный набор Гранат (Melograno): Диффузор 250 мл + Рефил 150 мл, Dr. Vranjes Firenze",
+    "kit_code": "LRU270571",
+    "kit_sku": "04630111270571",
+    "kit_name": "ПОДАРОЧНЫЙ НАБОР \"НЕЖНОЕ КАРИТЕ\"",
     "items": [
-      { "item_sku": "04600840186740", "item_name": "Ароматический диффузор для дома Melograno 150 мл (рефил)", "qty_required": 1 },
-      { "item_sku": "08033196272298", "item_name": "Ароматический диффузор для дома Melograno 250 мл", "qty_required": 1 }
+      { "item_code": "49MA010K24",   "item_sku": "03253581768655", "item_name": "Крем для рук Карите 10 мл", "qty_required": 1, "marked": true },
+      { "item_code": "49CP020K22",   "item_sku": "03253581735374", "item_name": "Ультрапитательный крем для тела Карите 20 мл", "qty_required": 1, "marked": true },
+      { "item_code": "98BBSA025LT2", "item_sku": "03253581717714", "item_name": "Мыло туалетное твердое \"экстра-мягкое\" 25 г", "qty_required": 1, "marked": true },
+      { "item_code": "LRU741824",    "item_sku": "02000200741824", "item_name": "Металлическая упаковка шар синий, Новый год 2026", "qty_required": 1, "marked": false },
+      { "item_code": "LRU743682",    "item_sku": "02000200743682", "item_name": "Картонная упаковка для шара синяя, Новый год 2026", "qty_required": 1, "marked": false }
     ]
   },
   {
-    "kit_sku": "08056860312748",
-    "kit_name": "Подарочный набор Фикодиндия (Fico di India): Диффузор 250 мл + Свеча 200 г, Dr. Vranjes Firenze",
+    "kit_code": "LRU270953",
+    "kit_sku": null,
+    "kit_name": "ПОДАРОЧНЫЙ НАБОР \"ЛУЧШИЕ ИЗ ПРОВАНСА\"",
     "items": [
-      { "item_sku": "08033196207429", "item_name": "Ароматический диффузор для дома Fico di India 250 мл", "qty_required": 1 },
-      { "item_sku": "08033196251859", "item_name": "Ароматическая свеча Fico di India 200 г", "qty_required": 1 }
+      { "item_code": "98BBSH035AR3", "item_sku": "03253581749364", "item_name": "Шампунь Восстанавливающий 35 мл", "qty_required": 1, "marked": true },
+      { "item_code": "49MA010K24",   "item_sku": "03253581768655", "item_name": "Крем для рук Карите 10 мл", "qty_required": 1, "marked": true },
+      { "item_code": "49HD035A15C",  "item_sku": "03253581768396", "item_name": "Масло для душа увлажняющее Миндальное 35 мл", "qty_required": 1, "marked": true },
+      { "item_code": "LRU741794",    "item_sku": "02000200741794", "item_name": "Металлическая упаковка шар бежевый, Новый год 2026", "qty_required": 1, "marked": false },
+      { "item_code": "LRU743651",    "item_sku": "02000200743651", "item_name": "Картонная упаковка для шара бежевая, Новый год 2026", "qty_required": 1, "marked": false }
+    ]
+  },
+  {
+    "kit_code": "NEW1",
+    "kit_sku": null,
+    "kit_name": "ПРАЗДНИЧНЫЙ БЬЮТИ-БОКС Л'ОКСИТАН",
+    "items": [
+      { "item_code": "98BBSH035VA0", "item_sku": null, "item_name": "Шампунь Вербена Цитрус 35 мл", "qty_required": 1, "marked": true },
+      { "item_code": "49MA010K24",   "item_sku": "03253581768655", "item_name": "Крем для рук Карите 10 мл", "qty_required": 1, "marked": true },
+      { "item_code": "49HD035A26",   "item_sku": null, "item_name": "Масло для душа увлажняющее Миндальное 35 мл", "qty_required": 1, "marked": true },
+      { "item_code": "49OR005I24",   "item_sku": null, "item_name": "Ночной эликсир «Мгновенная перезагрузка кожи» 5 мл", "qty_required": 1, "marked": true },
+      { "item_code": "49EV030I22",   "item_sku": null, "item_name": "Эфирный тоник для лица Драгоценный Иммортель 30 мл", "qty_required": 1, "marked": true },
+      { "item_code": "49CP008I22",   "item_sku": null, "item_name": "Крем для лица Драгоценный Иммортель 8 мл", "qty_required": 1, "marked": true },
+      { "item_code": "LRU741749",    "item_sku": null, "item_name": "Коробка PWP, Новый год 2026", "qty_required": 1, "marked": false }
     ]
   }
 ]

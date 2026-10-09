@@ -65,9 +65,10 @@
   .view{ display:none; }
   .view.active{ display:block; }
 
-  .consoles{ max-width:640px; }
+  .consoles{ max-width:720px; }
   .console{ background:var(--surface); border:1px solid var(--border); border-radius:10px; overflow:hidden; transition:border-color .15s;}
   .console.flash-err{ border-color:var(--err); }
+  .console.flash-ok{ border-color:var(--ok); }
   .console-head{
     display:flex; align-items:center; justify-content:space-between; padding:14px 18px;
     background:var(--surface-2); border-bottom:1px solid var(--border);
@@ -96,6 +97,47 @@
   .wh-dot{ display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--ok); margin-right:9px; }
   .console-body{ padding:18px; }
 
+  .section-label{ font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-dim); margin-bottom:9px; font-family:var(--mono);}
+
+  /* ---- выбор набора ---- */
+  .kit-picker{ display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:8px; margin-bottom:20px; }
+  .kit-card{
+    text-align:left; background:var(--surface-2); border:1px solid var(--border); color:var(--text);
+    border-radius:8px; padding:10px 12px; cursor:pointer; display:flex; flex-direction:column; gap:3px;
+    font-size:13.5px; line-height:1.35;
+  }
+  .kit-card:hover{ border-color:var(--accent); }
+  .kit-card.active{ border-color:var(--accent); background:var(--accent-wash); box-shadow:0 0 0 1px var(--accent) inset; }
+  .kit-card.auto{ border-style:dashed; }
+  .kit-card.detected{ border-color:var(--ok); background:var(--ok-dim); }
+  .kit-card.disabled{ opacity:.45; cursor:not-allowed; }
+  .kit-card.disabled:hover{ border-color:var(--border); }
+  .kit-card-code{ font-family:var(--mono); font-size:12px; color:var(--text-dim); }
+  .kit-card-note{ font-size:12px; color:var(--warn); }
+
+  /* ---- чек-лист состава ---- */
+  .checklist{ display:flex; flex-direction:column; gap:5px; margin-bottom:18px; }
+  .check-row{
+    display:flex; align-items:center; gap:11px; padding:9px 12px; border-radius:7px;
+    background:var(--surface-2); border:1px solid var(--border); color:var(--text-dim);
+    transition:background-color .15s, border-color .15s, color .15s;
+  }
+  .check-mark{
+    width:20px; height:20px; border-radius:50%; flex-shrink:0; display:flex; align-items:center; justify-content:center;
+    background:var(--surface-3); border:1px solid var(--border); font-size:12px; font-weight:700; color:transparent;
+  }
+  .check-name{ flex:1; font-size:14px; }
+  .check-tag{ font-family:var(--mono); font-size:11px; padding:1px 6px; border-radius:4px; border:1px solid var(--border); color:var(--text-faint); }
+  .check-count{ font-family:var(--mono); font-size:12.5px; min-width:30px; text-align:right; }
+  .check-row.partial{ border-color:var(--warn); }
+  .check-row.partial .check-mark{ border-color:var(--warn); }
+  .check-row.done{ background:var(--ok-dim); border-color:var(--ok); color:var(--text); }
+  .check-row.done .check-mark{ background:var(--ok); border-color:var(--ok); color:#0E1A13; }
+  .check-row.done .check-tag{ border-color:var(--ok); color:var(--ok); }
+  .check-row.agg{ margin-top:4px; border-style:dashed; }
+  .check-row.agg.ready{ border-color:var(--accent); border-style:solid; background:var(--accent-wash); color:var(--text); }
+  .check-empty{ color:var(--text-dim); font-size:14px; padding:14px 4px; }
+
   .scan-input-row{ display:flex; gap:8px; }
   input.scan-input{
     flex:1; background:var(--bg); border:1px solid var(--surface-3); color:var(--text);
@@ -109,9 +151,6 @@
   .progress-row{ display:flex; gap:20px; margin-top:20px; flex-wrap:wrap;}
   .progress-block{ flex:1; min-width:130px;}
   .progress-label{ font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-dim); margin-bottom:7px; font-family:var(--mono);}
-  .dots{ display:flex; gap:6px; flex-wrap:wrap;}
-  .dot{ width:12px; height:12px; border-radius:3px; background:var(--surface-3); border:1px solid var(--border);}
-  .dot.filled{ background:var(--accent); border-color:var(--accent); }
   .count-badge{ font-family:var(--mono); font-size:13.5px; color:var(--text); }
 
   .feed{ margin-top:20px; border-top:1px solid var(--border); padding-top:12px; max-height:220px; overflow-y:auto; }
@@ -155,7 +194,7 @@
 
   table.report{ width:100%; border-collapse:collapse; font-size:14px; }
   table.report th{ text-align:left; padding:10px 11px; background:var(--surface-2); color:var(--text-dim); font-family:var(--mono); font-size:11.5px; text-transform:uppercase; letter-spacing:.05em; border-bottom:1px solid var(--border);}
-  table.report td{ padding:9px 11px; border-bottom:1px solid var(--border); font-family:var(--mono); font-size:13px;}
+  table.report td{ padding:9px 11px; border-bottom:1px solid var(--border); font-family:var(--mono); font-size:13px; word-break:break-all;}
   table.report tr:hover td{ background:var(--surface); }
   .toolbar{ display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; gap:14px; flex-wrap:wrap;}
   .btn{
@@ -204,13 +243,13 @@
   <!-- ===================== REPORT VIEW ===================== -->
   <section id="view-report" class="view">
     <div class="toolbar">
-      <div class="note" style="margin:0;">Формат — как в примере от Таможенного отдела: <b>Название набора / Код идентификации набора / Наименование товара / Код маркировки</b>. Технические поля (короб, паллета, станция, время) в выгрузку не входят — хранятся во внутренней БД для разбора инцидентов (вкладка «Контроль»).</div>
+      <div class="note" style="margin:0;">Формат выгрузки: <b>Код идентификации набора / Номер набора / Наименование товара / Код маркировки</b>. В выгрузку входят только товары с КМ из закрытых наборов (упаковка без КМ не входит). Номер набора — сквозной порядковый номер по порядку закрытия (1, 2, 3…), присваивается сразу при закрытии набора агрегационным кодом. Станция, время, короб и паллета хранятся во внутренней БД (вкладка «Контроль»).</div>
       <div style="display:flex; gap:8px; flex-shrink:0;">
         <button class="btn" id="export-btn">Скачать CSV</button>
       </div>
     </div>
     <table class="report">
-      <thead><tr><th>Название набора</th><th>Код идентификации набора</th><th>Наименование товара</th><th>Код маркировки</th></tr></thead>
+      <thead><tr><th>Код идентификации набора</th><th>Номер набора</th><th>Наименование товара</th><th>Код маркировки</th></tr></thead>
       <tbody id="report-body"></tbody>
     </table>
     <div id="report-empty" class="empty" style="display:none;">Пока нет закрытых наборов — отсканируйте хотя бы один комплект во вкладке «Сборка».</div>
