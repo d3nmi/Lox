@@ -14,6 +14,8 @@
 #   box_dtv_code  ОС: номер короба DTV…      (пусто, пока набор не попал в короб)
 #   assembled_at  Дата сборки                (момент закрытия набора, местное время)
 #   station_id    Название станции           (стол, на котором собран набор)
+#   item_id       Служебный номер товара     (в CSV не выводится; задаёт порядок строк внутри набора —
+#                                             у представления нет rowid, новые версии SQLite дают на него ошибку)
 # В отчёт входят только товары с КМ из ЗАКРЫТЫХ наборов (как и в основном отчёте).
 # ============================================================
 from .db import conn, read_lock, lock
@@ -26,7 +28,8 @@ SELECT k.km_agg_code  AS kit_agg_code,
        i.km_code      AS km_code,
        b.km_box_code  AS box_dtv_code,
        k.closed_at    AS assembled_at,
-       k.station_id   AS station_id
+       k.station_id   AS station_id,
+       i.id           AS item_id
 FROM items i
 JOIN kits k ON k.id = i.kit_id AND k.status = 'closed'
 LEFT JOIN boxes b ON b.id = k.box_id
@@ -50,7 +53,7 @@ def full_report_rows(limit=None):
     limit_sql = f"LIMIT {int(limit)}" if limit else ""
     with read_lock():
         rows = conn.execute(
-            f"SELECT {', '.join(_COLS)} FROM report_view ORDER BY kit_no DESC, rowid DESC {limit_sql}"
+            f"SELECT {', '.join(_COLS)} FROM report_view ORDER BY kit_no DESC, item_id DESC {limit_sql}"
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -78,7 +81,7 @@ def full_report_csv(excel=False):
     """Выгрузка в хронологическом порядке закрытия наборов. КМ записываются без изменений."""
     with read_lock():
         rows = conn.execute(
-            f"SELECT {', '.join(_COLS)} FROM report_view ORDER BY kit_no, rowid"
+            f"SELECT {', '.join(_COLS)} FROM report_view ORDER BY kit_no, item_id"
         ).fetchall()
     cell_km = _excel if excel else _esc
     lines = [';'.join(_esc(h) for h in HEADERS)]

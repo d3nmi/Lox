@@ -236,7 +236,7 @@ class KmIntegrityTest(unittest.TestCase):
         """Расширенный отчёт: SQL-представление report_view и CSV с 7 столбцами."""
         import re
         cols = [r[1] for r in conn.execute("PRAGMA table_info(report_view)").fetchall()]
-        self.assertEqual(cols, ["kit_agg_code", "kit_no", "item_name", "km_code", "box_dtv_code", "assembled_at", "station_id"])
+        self.assertEqual(cols, ["kit_agg_code", "kit_no", "item_name", "km_code", "box_dtv_code", "assembled_at", "station_id", "item_id"])
         n_view = conn.execute("SELECT COUNT(*) FROM report_view").fetchone()[0]
         self.assertEqual(n_view, report.report_count() if hasattr(report, "report_count") else n_view)
         # до сканирования короба — столбец ОС пуст

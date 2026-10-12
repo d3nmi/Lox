@@ -20,7 +20,8 @@ MSG_BAD_REQUEST = "Некорректный запрос. Обновите ст�
 def install_error_handlers(app):
     @app.exception_handler(sqlite3.Error)
     async def _db_error(request: Request, exc: sqlite3.Error):
-        log.exception("Ошибка БД: %s %s", request.method, request.url.path)
+        log.error("Ошибка БД: %s %s -> %s: %s", request.method, request.url.path, type(exc).__name__, exc)
+        log.exception("Ошибка БД (подробности): %s %s", request.method, request.url.path)
         return JSONResponse(status_code=503, content={"detail": MSG_DB})
 
     @app.exception_handler(RequestValidationError)
