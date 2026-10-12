@@ -32,10 +32,18 @@
 <div class="wrap">
   <h1>Отчёт для ТО</h1>
   <p class="note">Формат выгрузки: Код идентификации набора / Номер набора / Наименование товара / Код маркировки.
+    Символ GS (ASCII 29) в таблице показан как [GS], а в файле записан настоящим символом.
     В файл входят только товары с КМ из закрытых наборов.</p>
   <div class="toolbar">
     <a class="btn" href="/api/export.csv" id="dl">Скачать CSV</a>
+    <a class="btn ghost" href="/api/export.csv?excel=1" title="Числовые коды записываются как текст, чтобы Excel не превратил их в числа">CSV для Excel</a>
     <button class="btn ghost" id="refresh" type="button">Обновить таблицу</button>
+  </div>
+  <p class="note" style="margin-top:4px;">Расширенная выгрузка — те же строки, плюс номер короба DTV (если набор уже в коробе),
+    дата сборки и название станции.</p>
+  <div class="toolbar">
+    <a class="btn ghost" href="/api/export-full.csv">Расширенный CSV</a>
+    <a class="btn ghost" href="/api/export-full.csv?excel=1" title="Числовые коды записываются как текст, чтобы Excel не превратил их в числа">Расширенный CSV для Excel</a>
   </div>
   <div class="table-wrap">
     <table>
@@ -46,6 +54,7 @@
   <div id="empty" class="empty" style="display:none;">Пока нет закрытых наборов.</div>
   <div id="count"></div>
 </div>
+<script src="km-utils.js"></script>
 <script>
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 async function load(){
@@ -58,7 +67,7 @@ async function load(){
   }
   if(!data.rows.length){ body.innerHTML=''; empty.style.display='block'; count.textContent=''; return; }
   empty.style.display='none';
-  body.innerHTML=data.rows.map(r=>`<tr><td>${esc(r.kit_agg_code)}</td><td>${r.kit_no==null?'—':esc(r.kit_no)}</td><td>${esc(r.item_name)}</td><td>${esc(r.km_code)}</td></tr>`).join('');
+  body.innerHTML=data.rows.map(r=>`<tr><td>${esc(KmUtils.visibleKm(r.kit_agg_code))}</td><td>${r.kit_no==null?'—':esc(r.kit_no)}</td><td>${esc(r.item_name)}</td><td>${esc(KmUtils.visibleKm(r.km_code))}</td></tr>`).join('');
   count.textContent = data.total>data.rows.length
     ? `Показаны последние ${data.rows.length} из ${data.total} строк. В файле CSV — все строки.`
     : `Всего строк: ${data.total}.`;

@@ -14,10 +14,13 @@ from .db import conn, init_db
 from .validation import process_scan, get_station_state, select_kit, set_station_settings, ensure_box_schema
 from .control import build_tree, search_code, get_stats
 from .station_stats import get_station_stats
-from .report import export_csv, report_rows, report_count, export_data_csv, export_data_rows, export_data_count
+from .report_view import ensure_report_view, full_report_csv
+from .report import (export_csv, report_rows, report_count, export_data_csv, export_data_rows, export_data_count,
+                     export_csv_excel, export_data_csv_excel)
 from .backup import run_backup, schedule_backups, list_backups
 from .paths import resource_dir
 from .errors import install_error_handlers
+from .auth import ensure_pass_file, check_password
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
 log = logging.getLogger("km")
@@ -37,6 +40,8 @@ install_error_handlers(app)   # пользователь не увидит trace
 # в пугающий async-трейсбек поверх и без того понятного сообщения об ошибке.
 init_db()
 ensure_box_schema()  # настройки станции (режим «Код короба») и kits.box_no — см. validation.py
+ensure_pass_file()   # pass.txt — пароль для настроек станции (см. auth.py)
+ensure_report_view()  # SQL-представление report_view для расширенного отчёта (см. report_view.py)
 
 
 def _check_station_id(station_id: str) -> str:
@@ -59,6 +64,7 @@ class SelectKitRequest(BaseModel):
 
 class SettingsRequest(BaseModel):
     require_box: bool = False
+    password: str = ""
 
 
 @app.on_event("startup")
@@ -107,7 +113,11 @@ def choose_kit(station_id: str, body: SelectKitRequest):
 @app.post("/api/stations/{station_id}/settings")
 def station_settings(station_id: str, body: SettingsRequest):
     station_id = _check_station_id(station_id)
-    result = set_station_settings(station_id, body.require_box)
+    ok, err = check_password(body.password)   # пароль из файла pass.txt
+    if ok:
+        result = set_station_settings(station_id, body.require_box)
+    else:
+        result = {'result': 'error', 'message': err}
     result["state"] = get_station_state(station_id)
     return result
 
@@ -175,12 +185,24 @@ def report_preview(limit: int = Query(default=200, ge=1, le=5000)):
 
 
 @app.get("/api/export.csv")
-def export():
-    csv_text = export_csv()
+def export(excel: int = Query(default=0)):
+    # excel=1: числовые коды пишутся как ="..." — Excel не превращает их в числа.
+    # Обычная выгрузка (по умолчанию) содержит КМ в исходном виде, без изменений.
+    csv_text = export_csv_excel() if excel else export_csv()
     return Response(
         content=csv_text,
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": 'attachment; filename="km_export.csv"'},
+    )
+
+
+# ---------- расширенный отчёт: + номер короба DTV, дата сборки, станция ----------
+@app.get("/api/export-full.csv")
+def export_full(excel: int = Query(default=0)):
+    return Response(
+        content=full_report_csv(bool(excel)),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="km_export_full.csv"'},
     )
 
 
@@ -191,8 +213,8 @@ def export_data_preview(limit: int = Query(default=200, ge=1, le=5000)):
 
 
 @app.get("/api/export-data.csv")
-def export_data_export():
-    csv_text = export_data_csv()
+def export_data_export(excel: int = Query(default=0)):
+    csv_text = export_data_csv_excel() if excel else export_data_csv()
     return Response(
         content=csv_text,
         media_type="text/csv; charset=utf-8",

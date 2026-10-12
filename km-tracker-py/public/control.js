@@ -56,18 +56,18 @@ async function refreshTree() {
 
 function nodeHtml(node) {
   if (node.type === 'item') {
-    return `<div class="item-row">${escapeHtml(node.name)} — <span class="code">${escapeHtml(node.code)}</span></div>`;
+    return `<div class="item-row">${escapeHtml(node.name)} — <span class="code">${escapeHtml(KmUtils.visibleKm(node.code))}</span></div>`;
   }
   const childrenHtml = (node.children || []).map(nodeHtml).join('');
   if (node.type === 'kit') {
     const openBadge = node.status === 'open' ? `<span class="badge open">в сборке ${node.items_count}/${node.items_required}</span>` : '';
-    return `<details class="kit"><summary>🧩 Набор «${escapeHtml(shortName(node.name))}» ${node.code ? `— <span class="code">${escapeHtml(node.code)}</span>` : ''} <span class="badge">станция ${escapeHtml(node.station_id)}</span>${openBadge}</summary>${childrenHtml}</details>`;
+    return `<details class="kit"><summary>🧩 Набор «${escapeHtml(shortName(node.name))}» ${node.code ? `— <span class="code">${escapeHtml(KmUtils.visibleKm(node.code))}</span>` : ''} <span class="badge">станция ${escapeHtml(node.station_id)}</span>${openBadge}</summary>${childrenHtml}</details>`;
   }
   if (node.type === 'box') {
-    return `<details class="box"><summary>📦 Короб <span class="code">${escapeHtml(node.code)}</span> <span class="badge">${node.kits_count} наб.</span> <span class="badge">закрыт со станции ${escapeHtml(node.station_id)}</span></summary>${childrenHtml}</details>`;
+    return `<details class="box"><summary>📦 Короб <span class="code">${escapeHtml(KmUtils.visibleKm(node.code))}</span> <span class="badge">${node.kits_count} наб.</span> <span class="badge">закрыт со станции ${escapeHtml(node.station_id)}</span></summary>${childrenHtml}</details>`;
   }
   if (node.type === 'pallet') {
-    return `<details class="pallet"><summary>🟧 Паллета <span class="code">${escapeHtml(node.code)}</span> <span class="badge">${node.boxes_count} короб.</span></summary>${childrenHtml}</details>`;
+    return `<details class="pallet"><summary>🟧 Паллета <span class="code">${escapeHtml(KmUtils.visibleKm(node.code))}</span> <span class="badge">${node.boxes_count} короб.</span></summary>${childrenHtml}</details>`;
   }
   return '';
 }

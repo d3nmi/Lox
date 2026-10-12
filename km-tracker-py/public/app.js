@@ -200,14 +200,50 @@ function selectKit(kitCode) {
   });
 }
 
-function setRequireBox(on) {
+/* Запрос пароля (поле скрывает символы). Возвращает введённый текст или null, если нажали «Отмена». */
+function askPassword() {
+  return new Promise((resolve) => {
+    const backdrop = document.getElementById('pass-modal-backdrop');
+    const input = document.getElementById('pass-input');
+    const okBtn = document.getElementById('pass-confirm');
+    const cancelBtn = document.getElementById('pass-cancel');
+    backdrop.style.display = 'flex';
+    input.value = '';
+    input.focus();
+    function done(val) {
+      backdrop.style.display = 'none';
+      okBtn.removeEventListener('click', onOk);
+      cancelBtn.removeEventListener('click', onCancel);
+      input.removeEventListener('keydown', onKey);
+      input.value = '';
+      resolve(val);
+    }
+    function onOk() { done(input.value); }
+    function onCancel() { done(null); }
+    function onKey(e) {
+      if (e.key === 'Enter') onOk();
+      else if (e.key === 'Escape') onCancel();
+    }
+    okBtn.addEventListener('click', onOk);
+    cancelBtn.addEventListener('click', onCancel);
+    input.addEventListener('keydown', onKey);
+  });
+}
+
+/* Галочка «Код короба» меняется только после ввода пароля (проверяется на сервере по файлу pass.txt). */
+async function setRequireBox(on) {
+  const password = await askPassword();
+  if (password === null) {                      // отмена — возвращаем галочку как была
+    renderConsole({ focusInput: true });
+    return;
+  }
   return enqueue(async () => {
     let resp;
     try {
       resp = await api(`/api/stations/${encodeURIComponent(STATION_ID)}/settings`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ require_box: !!on })
+        body: JSON.stringify({ require_box: !!on, password })
       });
     } catch (e) {
       setConn(false);
@@ -215,12 +251,15 @@ function setRequireBox(on) {
       return;
     }
     if (resp.state) stationState = resp.state;
-    renderConsole({ focusInput: true });
+    renderConsole({
+      lastEvent: resp.result === 'error' ? { result: 'error', message: resp.message } : undefined,
+      focusInput: true
+    });
   });
 }
 
 function submitScan(code, opts = {}) {
-  code = (code || '').trim();
+  code = KmUtils.normalizeScan(code);   // убираем только пробелы/переводы строки по краям; GS сохраняется
   if (!code) return Promise.resolve();
   return enqueue(async () => {
     let resp;
@@ -275,7 +314,8 @@ function ensureConsoleSkeleton() {
     <div class="console-body two-col">
       <div class="col-left">
         <div class="section-label">1. Набор для сборки</div>
-        <div class="kit-picker" id="kit-picker"></div>
+        <select class="kit-select" id="kit-select" aria-label="Набор для сборки"></select>
+        <div class="kit-note" id="kit-note"></div>
 
         <div class="section-label">2. Сканируйте код</div>
         <div class="scan-input-row">
@@ -284,9 +324,9 @@ function ensureConsoleSkeleton() {
         <div class="scan-hint" id="hint-station"></div>
 
         <label id="box-toggle" class="box-toggle"
-               title="Включено: в конце набора сканируется код короба DTV… Выключено: набор закрывается автоматически">
+               title="Включено: в конце набора сканируется код короба DTV… Выключено: набор закрывается автоматически. Меняется по паролю.">
           <input type="checkbox" id="chk-require-box">
-          <span>Сканировать код короба (DTV…) в конце набора</span>
+          <span>Сканировать код короба (DTV…) в конце набора <span class="lock">🔒 пароль</span></span>
         </label>
       </div>
 
@@ -296,7 +336,7 @@ function ensureConsoleSkeleton() {
 
         <div class="progress-row">
           <div class="progress-block">
-            <div class="progress-label">Закрытых наборов ждут короб</div>
+            <div class="progress-label">Наборов ждут короб</div>
             <div class="count-badge" id="boxcount-station"></div>
           </div>
           <div class="progress-block">
@@ -313,16 +353,12 @@ function ensureConsoleSkeleton() {
   // Галочка «Код короба» — сохраняется на сервере для этой станции
   root.querySelector('#chk-require-box').addEventListener('change', (e) => setRequireBox(e.target.checked));
 
-  // Выбор набора — делегирование клика (карточки перерисовываются при каждом опросе)
-  root.querySelector('#kit-picker').addEventListener('click', (e) => {
-    const card = e.target.closest('.kit-card');
-    if (!card) return;
-    if (card.classList.contains('disabled')) {
-      renderConsole({ lastEvent: { result: 'error', message: card.dataset.reason || 'Этот набор сейчас выбрать нельзя' }, focusInput: true });
-      return;
-    }
-    if (card.classList.contains('active') || card.classList.contains('detected')) { renderConsole({ focusInput: true }); return; }
-    selectKit(card.dataset.code);
+  // Выбор набора из списка
+  root.querySelector('#kit-select').addEventListener('change', (e) => {
+    const value = e.target.value;
+    const cur = stationState && stationState.mode === 'pinned' && stationState.selectedKit ? stationState.selectedKit.kit_code : 'auto';
+    if (value === cur) { renderConsole({ focusInput: true }); return; }
+    selectKit(value);
   });
 
   const input = root.querySelector('.scan-input');
@@ -357,7 +393,14 @@ function ensureConsoleSkeleton() {
   }
 
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') submitFromInput();
+    if (e.key === 'Enter') { submitFromInput(); return; }
+    // Сканеры в режиме «клавиатура» передают GS (ASCII 29) как Ctrl+] (или сразу символом 0x1D).
+    // Поле ввода такие нажатия молча игнорирует — вставляем настоящий GS сами, иначе он терялся бы.
+    const isGsKey = (e.ctrlKey && !e.altKey && !e.metaKey && e.code === 'BracketRight') || e.key === KmUtils.GS;
+    if (isGsKey) {
+      e.preventDefault();
+      input.value += KmUtils.GS;
+    }
   });
 
   setInterval(() => {
@@ -372,35 +415,36 @@ function ensureConsoleSkeleton() {
 }
 
 function renderKitPicker() {
-  const picker = document.getElementById('kit-picker');
-  if (!picker) return;
+  const select = document.getElementById('kit-select');
+  const note = document.getElementById('kit-note');
+  if (!select) return;
   const s = stationState;
   const sel = s.selectedKit;
   const auto = s.mode === 'auto';
   const locked = !!(s.currentKit && !s.currentKit.pending);
-  const detectedCode = (auto && locked && sel) ? sel.kit_code : null;
+  const detected = (auto && locked && sel) ? sel : null;
 
-  const autoCard =
-    `<div class="kit-card auto${auto ? ' active' : ''}" role="button" data-code="auto" title="Набор определяется по первому отсканированному КМ">` +
-    `<span class="kit-card-code">АВТО</span><span>Определять набор по сканированию КМ</span>` +
-    (detectedCode ? '<span class="kit-card-note">набор определён — см. ниже</span>' : '') +
-    `</div>`;
-
-  const cards = templates.map(t => {
+  const options = [`<option value="auto">АВТО — определять набор по первому отсканированному КМ</option>`];
+  templates.forEach(t => {
     const pinned = !auto && !!sel && sel.kit_code === t.kit_code;
-    const detected = detectedCode === t.kit_code;
-    let reason = '';
-    if (!t.ready) reason = `Набор пока нельзя собирать — в справочнике не заполнены GTIN (${t.missing.length} поз.)`;
-    else if (locked && !pinned && !detected) reason = 'Сначала завершите набор, который уже начат на этой станции';
-    const disabled = !!reason;
-    return `<div class="kit-card${pinned ? ' active' : ''}${detected ? ' detected' : ''}${disabled ? ' disabled' : ''}" role="button" data-code="${escapeHtml(t.kit_code)}"` +
-      ` data-reason="${escapeHtml(reason)}" title="${escapeHtml(reason)}">` +
-      `<span class="kit-card-code">${escapeHtml(t.kit_code)}${detected ? ' · определён' : ''}</span>` +
-      `<span>${escapeHtml(t.kit_name)}</span>` +
-      (!t.ready ? '<span class="kit-card-note">нет GTIN в справочнике</span>' : '') +
-      `</div>`;
-  }).join('');
-  picker.innerHTML = autoCard + (cards || '<div class="check-empty">Справочник наборов пуст</div>');
+    const isDetected = !!detected && detected.kit_code === t.kit_code;
+    let suffix = '';
+    let disabled = false;
+    if (!t.ready) { suffix = ' — нет GTIN в справочнике'; disabled = true; }
+    else if (locked && !pinned && !isDetected) { suffix = ' — сначала завершите начатый набор'; disabled = true; }
+    options.push(`<option value="${escapeHtml(t.kit_code)}"${disabled ? ' disabled' : ''}>${escapeHtml(t.kit_code)} · ${escapeHtml(t.kit_name)}${suffix}</option>`);
+  });
+  if (!templates.length) options.push('<option disabled>Справочник наборов пуст</option>');
+
+  // Список перерисовываем только если он изменился — иначе открытый выпадающий список закрывался бы при каждом опросе
+  const html = options.join('');
+  if (select.dataset.sig !== html) { select.innerHTML = html; select.dataset.sig = html; }
+  const value = auto ? 'auto' : (sel ? sel.kit_code : 'auto');
+  if (document.activeElement !== select && select.value !== value) select.value = value;
+
+  note.textContent = detected ? `Набор определён: ${detected.kit_name}`
+    : (auto ? '' : '');
+  note.classList.toggle('detected', !!detected);
 }
 
 function renderChecklist() {
@@ -454,6 +498,7 @@ function renderChecklist() {
     );
   }
   el.innerHTML = rows.join('');
+  el.classList.toggle('dense', rows.length > 8);   // длинный состав — в две колонки, чтобы не было прокрутки
 }
 
 function renderConsole(opts = {}) {
@@ -493,7 +538,7 @@ function renderConsole(opts = {}) {
   document.getElementById('palletcount-station').textContent = `${s.boxesOnPallet} коробов в пуле`;
 
   const feedEl = document.getElementById('feed-station');
-  feedEl.innerHTML = (s.feed || []).map(f => `
+  feedEl.innerHTML = (s.feed || []).slice(0, 12).map(f => `
     <div class="feed-line ${f.result}">
       <span class="feed-time">${fmtTime(f.t)}</span><span class="feed-msg">${escapeHtml(f.message)}</span>
     </div>`).join('') || '<div class="feed-line info"><span class="feed-msg">Событий пока нет</span></div>';

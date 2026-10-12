@@ -37,13 +37,29 @@ import re
 import sqlite3
 from .db import conn, transaction, read_lock, next_scan_order, lock
 
-GTIN_RE = re.compile(r'^01(\d{14})')          # GS1-код (КМ товара / агрегата набора)
-PLAIN_RE = re.compile(r'^\d{13,14}$')         # обычный штрихкод EAN-13 / GTIN-14
-BOX_CODE_RE = re.compile(r'^DTV\d{10}$')      # реальный формат короба, пример: DTV0003111664
+GTIN_RE = re.compile(r'^01(\d{14})', re.ASCII)          # GS1-код (КМ товара / агрегата набора)
+PLAIN_RE = re.compile(r'^\d{13,14}$', re.ASCII)         # обычный штрихкод EAN-13 / GTIN-14
+BOX_CODE_RE = re.compile(r'^DTV\d{10}$', re.ASCII)      # реальный формат короба, пример: DTV0003111664
 MAX_KITS_PER_BOX = 80  # временный лимит наборов на один короб — заменить на реальный
 
 # Подставной GTIN для тестовой кнопки агрегата набора, у которого GTIN в справочнике не задан
 FAKE_AGG_GTIN = '09999999999990'
+
+# --- km-integrity patch ---
+GS = chr(29)   # управляющий символ GS (ASCII 29) — часть КМ, между полями GS1
+
+
+def strip_scan(raw):
+    """Убирает по краям ТОЛЬКО пробелы, табуляцию, CR и LF (их добавляет сканер/ввод).
+    Нельзя использовать str.strip() без аргументов: в Python он считает пробелом и GS (ASCII 29),
+    и отрезал бы его на краю кода."""
+    return (raw or '').strip(' \t\r\n')
+
+
+def _vis(s):
+    """Только для текста сообщений на экране: настоящий GS показывается как [GS]."""
+    return (s or '').replace(GS, '[GS]')
+
 
 
 def short_name(name):
@@ -386,7 +402,7 @@ def _insert_item(station_id, code, is_gs1, slot, kit_id):
 
 
 def _unrecognized(code):
-    return (f'Код "{code[:24]}" не распознан (ожидается КМ товара, штрихкод/артикул упаковки, '
+    return (f'Код "{_vis(code)[:24]}" не распознан (ожидается КМ товара, штрихкод/артикул упаковки, '
             f'код короба "DTV…" или паллеты "PLT-…")')
 
 
@@ -586,7 +602,7 @@ def _handle_item_or_kit_agg(station_id, code):
 
 def process_scan(station_id, raw_code):
     """Один скан = одна непрерывная транзакция от первой до последней строки."""
-    code = (raw_code or '').strip()
+    code = strip_scan(raw_code)
 
     with transaction():
         if not code:
@@ -598,7 +614,7 @@ def process_scan(station_id, raw_code):
         if GTIN_RE.match(code) or BOX_CODE_RE.match(code) or code.startswith('PLT-'):
             dup = conn.execute("SELECT code_type FROM used_codes WHERE code=?", (code,)).fetchone()
             if dup:
-                return _fail(station_id, code, dup["code_type"], f'Код уже был отсканирован ранее (дубль): {code}')
+                return _fail(station_id, code, dup["code_type"], f'Код уже был отсканирован ранее (дубль): {_vis(code)}')
 
         try:
             if BOX_CODE_RE.match(code):
@@ -608,7 +624,7 @@ def process_scan(station_id, raw_code):
             return _handle_item_or_kit_agg(station_id, code)
         except sqlite3.IntegrityError:
             # Второй рубеж защиты от дублей/гонок — UNIQUE-констрейнты в схеме.
-            return _fail(station_id, code, 'unknown', f'Код уже был отсканирован ранее (дубль): {code}')
+            return _fail(station_id, code, 'unknown', f'Код уже был отсканирован ранее (дубль): {_vis(code)}')
 
 
 # ---- снимок текущего состояния консоли станции ----

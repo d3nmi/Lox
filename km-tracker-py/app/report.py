@@ -83,3 +83,35 @@ def export_data_csv():
     for r in rows:
         lines.append(';'.join(_csv_escape(v) for v in (r['kit_agg_code'], r['item_km_code'], r['box_km_code'])))
     return '﻿' + '\r\n'.join(lines)  # box_km_code будет пуст, пока набор не в коробе
+
+
+# --- km-integrity patch (excel) ---
+def _excel_cell(val):
+    """Для выгрузки «для Excel»: чисто цифровой код записывается как ="..." — так Excel
+    оставит его текстом (иначе превратит в число: потеряет ведущие нули и точность).
+    Остальные значения — как в обычной выгрузке, без изменений."""
+    if val is None:
+        return ''
+    s = str(val)
+    if s.isascii() and s.isdigit():
+        return '="' + s + '"'
+    return _csv_escape(s)
+
+
+def export_csv_excel():
+    rows = list(reversed(report_rows(None)))
+    header = ['Код идентификации набора', 'Номер набора', 'Наименование товара', 'Код маркировки']
+    lines = [';'.join(_csv_escape(h) for h in header)]
+    for r in rows:
+        lines.append(';'.join((_excel_cell(r['kit_agg_code']), _csv_escape(r['kit_no']),
+                               _csv_escape(r['item_name']), _excel_cell(r['km_code']))))
+    return '\ufeff' + '\r\n'.join(lines)
+
+
+def export_data_csv_excel():
+    rows = list(reversed(export_data_rows(None)))
+    header = ['Код набора', 'Код вложения', 'Код короба']
+    lines = [';'.join(_csv_escape(h) for h in header)]
+    for r in rows:
+        lines.append(';'.join(_excel_cell(v) for v in (r['kit_agg_code'], r['item_km_code'], r['box_km_code'])))
+    return '\ufeff' + '\r\n'.join(lines)
