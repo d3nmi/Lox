@@ -6,76 +6,186 @@
 <title>Контроль — КМ-трекинг</title>
 <style>
   :root{ --bg:#14171C; --surface:#1A1E24; --surface-2:#20252C; --surface-3:#2A3039; --border:#333A44;
-    --text:#EDEFF2; --text-dim:#8E97A3; --accent:#6C97C2; --warn:#D8AB55; --err:#D9686C;
+    --text:#EDEFF2; --text-dim:#9AA3AF; --text-faint:#5B636F; --accent:#6C97C2; --accent-wash:#1C2733;
+    --ok:#4FAE7C; --ok-dim:#1C2A22; --err:#D9686C; --err-dim:#332120; --warn:#D8AB55;
     --mono:ui-monospace,"SFMono-Regular",Consolas,Menlo,monospace;
     --sans:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
   *{box-sizing:border-box;}
-  body{ margin:0; background:var(--bg); color:var(--text); font-family:var(--sans); font-size:15px; line-height:1.55; }
-  .wrap{ max-width:1320px; margin:0 auto; padding:24px 28px 64px; }
-  .top{ display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:18px; }
+  body{ margin:0; background:var(--bg); color:var(--text); font-family:var(--sans); font-size:15px; line-height:1.5; }
+  .wrap{ max-width:1400px; margin:0 auto; padding:20px 28px 64px; }
+  .top{ display:flex; justify-content:space-between; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:14px; }
   h1{ font-size:22px; font-weight:600; margin:0; }
+  .top-right{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
   a.link{ color:var(--accent); text-decoration:none; font-size:14px; }
   a.link:hover{ text-decoration:underline; }
-  .stat-strip{ display:flex; gap:12px; margin-bottom:8px; flex-wrap:wrap; }
-  .stat{ background:var(--surface); border:1px solid var(--border); border-radius:9px; padding:12px 18px; min-width:128px; }
-  .stat-num{ font-size:25px; font-weight:600; }
-  .stat-label{ font-size:12px; color:var(--text-dim); text-transform:uppercase; letter-spacing:.05em; margin-top:2px; }
-  .section-title{ font-size:16px; font-weight:600; margin:26px 0 10px; }
-  .section-title small{ color:var(--text-dim); font-weight:400; font-size:13px; margin-left:8px; }
-  .table-wrap{ overflow-x:auto; margin-bottom:8px; }
-  table.stations{ width:100%; border-collapse:collapse; font-size:14px; }
-  table.stations th{ text-align:left; padding:10px 11px; background:var(--surface-2); color:var(--text-dim); font-size:11.5px; text-transform:uppercase; letter-spacing:.05em; border-bottom:1px solid var(--border); white-space:nowrap; }
-  table.stations td{ padding:9px 11px; border-bottom:1px solid var(--border); font-family:var(--mono); font-size:13px; }
-  table.stations tr.total td{ font-weight:600; background:var(--surface); }
-  table.stations td.err-high{ color:var(--err); }
-  .note{ font-size:13.5px; color:var(--text-dim); margin-top:8px; line-height:1.6; }
-  .search-row{ display:flex; gap:8px; margin-bottom:18px; }
-  .search-row input{ flex:1; background:var(--surface); border:1px solid var(--border); color:var(--text); font-family:var(--mono); font-size:14.5px; padding:11px 13px; border-radius:7px; outline:none; }
-  .search-row input:focus{ border-color:var(--accent); }
-  .btn{ background:transparent; border:1px solid var(--border); color:var(--text-dim); font-size:14px; padding:10px 18px; border-radius:7px; cursor:pointer; }
+  input, select, button{ font-family:inherit; }
+  .field{ background:var(--surface); border:1px solid var(--border); color:var(--text); border-radius:7px; padding:9px 11px; font-size:14px; outline:none; }
+  .field:focus{ border-color:var(--accent); }
+  .btn{ background:transparent; border:1px solid var(--border); color:var(--text-dim); font-size:14px; padding:9px 16px; border-radius:7px; cursor:pointer; }
   .btn:hover{ border-color:var(--text-dim); color:var(--text); }
-  .tree{ font-family:var(--mono); font-size:14px; }
+
+  /* вкладки */
+  .tabs{ display:flex; gap:4px; border-bottom:1px solid var(--border); margin-bottom:20px; }
+  .tabs button{ background:transparent; border:none; border-bottom:2px solid transparent; color:var(--text-dim); font-size:15px; font-weight:500; padding:11px 18px; cursor:pointer; }
+  .tabs button:hover{ color:var(--text); }
+  .tabs button.active{ color:var(--text); border-bottom-color:var(--accent); font-weight:600; }
+  .tab{ display:none; }
+  .tab.active{ display:block; }
+
+  /* плитки с главными цифрами */
+  .kpis{ display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; margin-bottom:8px; }
+  .kpi{ background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:14px 18px; }
+  .kpi-label{ font-size:12.5px; color:var(--text-dim); text-transform:uppercase; letter-spacing:.05em; }
+  .kpi-num{ font-size:34px; font-weight:600; line-height:1.15; margin-top:4px; font-variant-numeric:tabular-nums; }
+  .kpi-num.err{ color:var(--err); }
+  .kpi-sub{ font-size:12.5px; color:var(--text-dim); margin-top:2px; }
+  .note{ font-size:13px; color:var(--text-dim); margin:8px 0 0; line-height:1.55; }
+  .totals{ font-size:13.5px; color:var(--text-dim); margin:0 0 4px; }
+  .totals b{ color:var(--text); font-weight:600; }
+
+  h2{ font-size:17px; font-weight:600; margin:28px 0 10px; }
+  h2 small{ font-size:13px; font-weight:400; color:var(--text-dim); margin-left:8px; }
+
+  /* таблицы */
+  .table-wrap{ overflow-x:auto; border:1px solid var(--border); border-radius:10px; background:var(--surface); }
+  table{ width:100%; border-collapse:collapse; font-size:14px; }
+  th{ text-align:left; padding:11px 14px; background:var(--surface-2); color:var(--text-dim); font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.04em; border-bottom:1px solid var(--border); white-space:nowrap; }
+  td{ padding:10px 14px; border-bottom:1px solid var(--border); vertical-align:middle; font-variant-numeric:tabular-nums; }
+  tbody tr:last-child td{ border-bottom:none; }
+  tbody tr:nth-child(even) td{ background:rgba(255,255,255,.015); }
+  tbody tr:hover td{ background:var(--surface-2); }
+  th.num, td.num{ text-align:right; }
+  td.name{ font-weight:600; }
+  td.dim, .dim{ color:var(--text-dim); }
+  tr.total td{ font-weight:600; background:var(--surface-2); border-top:1px solid var(--border); }
+  tr.err-row td{ background:var(--err-dim); }
+  .bad{ color:var(--err); font-weight:600; }
+  .empty{ color:var(--text-dim); padding:30px 10px; text-align:center; }
+
+  /* «ячейка с полоской»: число + длина полоски пропорциональна значению */
+  .cellbar{ position:relative; min-width:120px; padding:2px 0; text-align:right; }
+  .cellbar i{ position:absolute; left:0; bottom:0; height:3px; border-radius:2px; background:var(--accent); opacity:.85; }
+  .cellbar.items i{ background:var(--ok); }
+  .cellbar span{ position:relative; font-weight:600; }
+
+  /* по часам */
+  .hours{ display:grid; grid-template-columns:110px 1fr 1fr; gap:6px 18px; padding:14px 18px; background:var(--surface); border:1px solid var(--border); border-radius:10px; align-items:center; }
+  .hours .h-head{ font-size:12px; color:var(--text-dim); text-transform:uppercase; letter-spacing:.04em; }
+  .hours .h-time{ font-family:var(--mono); font-size:13px; color:var(--text-dim); }
+  .bar-line{ display:flex; align-items:center; gap:10px; min-width:0; }
+  .bar-line .bar{ height:14px; border-radius:3px; background:var(--accent); min-width:2px; }
+  .bar-line.items .bar{ background:var(--ok); }
+  .bar-line .val{ font-variant-numeric:tabular-nums; font-weight:600; font-size:14px; white-space:nowrap; }
+  .bar-line .val.zero{ color:var(--text-faint); font-weight:400; }
+
+  /* список кодов */
+  .search-row{ display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:12px; }
+  .search-row .field.grow{ flex:1; min-width:280px; font-family:var(--mono); font-size:15px; padding:12px 14px; }
+  .check{ display:flex; align-items:center; gap:7px; font-size:14px; color:var(--text-dim); cursor:pointer; }
+  .check input{ width:16px; height:16px; accent-color:var(--accent); }
+  .found{ font-size:13.5px; color:var(--text-dim); margin-bottom:10px; }
+  td.code{ font-family:var(--mono); font-size:13px; word-break:break-all; max-width:520px; }
+  .gs{ color:var(--warn); font-weight:700; }
+  .pill{ display:inline-block; font-size:12px; padding:2px 9px; border-radius:999px; border:1px solid var(--border); color:var(--text-dim); white-space:nowrap; }
+  .pill.ok{ color:var(--ok); border-color:var(--ok); }
+  .pill.err{ color:var(--err); border-color:var(--err); }
+  .pill.open{ color:var(--warn); border-color:var(--warn); }
+  .msg{ display:block; font-size:12.5px; color:var(--err); margin-top:3px; }
+
+  /* дерево */
+  .tree{ font-family:var(--mono); font-size:14px; margin-top:12px; }
   details.pallet{ background:var(--surface); border:1px solid var(--border); border-radius:9px; margin-bottom:9px; padding:9px 13px; }
   details.box{ background:var(--surface-2); border:1px solid var(--border); border-radius:7px; margin:7px 0; padding:7px 11px; }
   details.kit{ background:var(--surface-3); border-radius:6px; margin:6px 0; padding:6px 10px; }
   summary{ cursor:pointer; }
-  .code{ color:var(--accent); }
-  .item-row{ padding:4px 0 4px 15px; color:var(--text-dim); border-left:2px solid var(--border); margin-left:4px; }
+  .tcode{ color:var(--accent); }
+  .item-row{ padding:4px 0 4px 15px; color:var(--text-dim); border-left:2px solid var(--border); margin-left:4px; word-break:break-all; }
   .badge{ font-size:11px; padding:2px 7px; border-radius:4px; background:var(--surface); border:1px solid var(--border); color:var(--text-dim); margin-left:7px; }
   .badge.open{ background:var(--warn); border-color:var(--warn); color:#241c08; }
-  .empty{ color:var(--text-dim); font-size:14px; padding:34px 10px; text-align:center; }
+
+  @media (max-width:800px){ .wrap{ padding:14px 14px 48px; } .hours{ grid-template-columns:90px 1fr; } .hours .h-items{ grid-column:2; } }
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="top">
     <h1>Контроль</h1>
-    <a class="link" href="/report">Отчёт для ТО →</a>
+    <div class="top-right">
+      <a class="link" href="/report">Отчёт для ТО →</a>
+    </div>
   </div>
 
-  <div class="stat-strip" id="stat-strip"></div>
-
-  <div class="section-title">Работа столов за сегодня <small id="stations-date"></small></div>
-  <div class="table-wrap">
-    <table class="stations">
-      <thead><tr>
-        <th>Стол</th><th>Наборов</th><th>Товаров</th><th>Сканов</th><th>Ошибок</th>
-        <th title="Доля сканов с ошибкой">% ошибок</th>
-        <th title="Медиана времени от первого скана до закрытия набора">Время на набор</th>
-        <th title="Наборов за час между первым и последним сканом (считается после 10 минут работы)">Наборов/час</th>
-        <th>Начал</th><th>Последний скан</th>
-      </tr></thead>
-      <tbody id="stations-body"></tbody>
-    </table>
+  <div class="tabs" id="tabs">
+    <button type="button" data-tab="stats" class="active">Статистика</button>
+    <button type="button" data-tab="codes">Список кодов</button>
+    <button type="button" data-tab="tree">Короба и паллеты</button>
   </div>
-  <div class="note" id="stations-note"></div>
 
-  <div class="section-title">Все коды</div>
-  <div class="search-row">
-    <input id="search-input" placeholder="Поиск по любому коду (товар / набор / короб / паллета)…">
-    <button class="btn" id="tree-refresh" type="button">Обновить</button>
-  </div>
-  <div id="tree-root" class="tree"></div>
+  <!-- ============ СТАТИСТИКА ============ -->
+  <section class="tab active" id="tab-stats">
+    <div class="top" style="margin-bottom:12px;">
+      <div class="totals" id="totals"></div>
+      <div class="top-right">
+        <label class="dim" for="day">День:</label>
+        <input class="field" type="date" id="day">
+        <button class="btn" type="button" id="day-today">Сегодня</button>
+        <button class="btn" type="button" id="stats-refresh">Обновить</button>
+      </div>
+    </div>
+
+    <div class="kpis" id="kpis"></div>
+    <p class="note" id="rate-note"></p>
+
+    <h2>Работа столов <small id="stations-date"></small></h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>Стол</th>
+          <th class="num">Наборов</th>
+          <th class="num">Товаров</th>
+          <th class="num" title="Наборов за час реальной работы стола">Наборов в час</th>
+          <th class="num" title="Отсканированных товаров за час реальной работы стола">Товаров в час</th>
+          <th class="num" title="Типичное (медианное) время от первого скана до закрытия набора">Время на набор</th>
+          <th class="num" title="Сумма пауз между сканами не длиннее 5 минут">Время работы</th>
+          <th class="num">Ошибок</th>
+          <th>Работал</th>
+        </tr></thead>
+        <tbody id="stations-body"></tbody>
+      </table>
+    </div>
+
+    <h2>По часам <small>наборов закрыто и товаров отсканировано в каждый час</small></h2>
+    <div id="hours-box"></div>
+  </section>
+
+  <!-- ============ СПИСОК КОДОВ ============ -->
+  <section class="tab" id="tab-codes">
+    <div class="search-row">
+      <input class="field grow" id="code-search" placeholder="Найти: отсканируйте или введите код, номер набора или название стола" autocomplete="off">
+      <label class="check"><input type="checkbox" id="only-errors"> Только ошибки</label>
+      <button class="btn" type="button" id="codes-refresh">Обновить</button>
+    </div>
+    <div class="found" id="codes-found"></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>Время</th><th>Стол</th><th>Код</th><th>Что это</th><th>Результат</th><th>Набор</th><th>Короб</th>
+        </tr></thead>
+        <tbody id="codes-body"></tbody>
+      </table>
+    </div>
+    <p class="note">Список обновляется сам каждые 10 секунд. Символ GS (ASCII 29) внутри кода показан как <span class="gs">[GS]</span>;
+      при поиске он не мешает: код можно искать без него.</p>
+  </section>
+
+  <!-- ============ ДЕРЕВО ============ -->
+  <section class="tab" id="tab-tree">
+    <div class="search-row">
+      <input class="field grow" id="search-input" placeholder="Поиск по коду в структуре: товар / набор / короб / паллета" autocomplete="off">
+      <button class="btn" type="button" id="tree-refresh">Обновить</button>
+    </div>
+    <div id="tree-root" class="tree"></div>
+  </section>
 </div>
 <script src="km-utils.js"></script>
 <script src="control.js"></script>

@@ -14,8 +14,6 @@
 #   box_dtv_code  ОС: номер короба DTV…      (пусто, пока набор не попал в короб)
 #   assembled_at  Дата сборки                (момент закрытия набора, местное время)
 #   station_id    Название станции           (стол, на котором собран набор)
-#   item_id       Служебный номер товара     (в CSV не выводится; задаёт порядок строк внутри набора —
-#                                             у представления нет rowid, новые версии SQLite дают на него ошибку)
 # В отчёт входят только товары с КМ из ЗАКРЫТЫХ наборов (как и в основном отчёте).
 # ============================================================
 from .db import conn, read_lock, lock
@@ -29,7 +27,7 @@ SELECT k.km_agg_code  AS kit_agg_code,
        b.km_box_code  AS box_dtv_code,
        k.closed_at    AS assembled_at,
        k.station_id   AS station_id,
-       i.id           AS item_id
+       i.id           AS item_id          -- служебный номер строки (порядок сканирования), в CSV не выводится
 FROM items i
 JOIN kits k ON k.id = i.kit_id AND k.status = 'closed'
 LEFT JOIN boxes b ON b.id = k.box_id
@@ -38,7 +36,7 @@ WHERE i.marked = 1
 
 HEADERS = ['Код идентификации набора', 'Номер набора', 'Наименование товара',
            'Код маркировки', 'ОС (номер короба DTV)', 'Дата сборки', 'Название станции']
-_COLS = ['kit_agg_code', 'kit_no', 'item_name', 'km_code', 'box_dtv_code', 'assembled_at', 'station_id']
+_COLS = ['kit_agg_code', 'kit_no', 'item_name', 'km_code', 'box_dtv_code', 'assembled_at', 'station_id']  # столбцы отчёта (без item_id)
 
 
 def ensure_report_view():

@@ -306,5 +306,63 @@ class KmIntegrityTest(unittest.TestCase):
         self.assertEqual(self.client.post(url, json={"require_box": False, "password": ""}).json()["result"], "error")
 
 
+    def test_08_codes_list_and_search(self):
+        """Список кодов: находится код, введённый без GS и с «[GS]»; видны набор, короб и станция."""
+        full = self.client.get("/api/codes?limit=1000").json()
+        self.assertGreater(full["total"], 0)
+        for variant in (KM1.replace(GS, ""), KM1.replace(GS, "[GS]"), KM1):
+            data = self.client.get("/api/codes", params={"q": variant}).json()
+            hits = [r for r in data["rows"] if r["code"] == KM1 and r["result"] == "ok"]
+            self.assertTrue(hits, f"код не найден по запросу {variant!r}")
+            self.assertEqual(hits[0]["station_id"], "Стол A")
+            self.assertIsNotNone(hits[0]["kit_no"])
+            self.assertEqual(hits[0]["box_code"], "DTV0003111664")
+        # часть кода (середина) и регистр: серийник чувствителен к регистру
+        self.assertTrue(self.client.get("/api/codes", params={"q": "UZV'OEIGc"}).json()["rows"])
+        self.assertEqual(self.client.get("/api/codes", params={"q": "uzv'oeigc"}).json()["total"], 0)
+        # только ошибки: есть повторный скан КМ1 из теста дублей
+        errs = self.client.get("/api/codes?errors=1&limit=1000").json()
+        self.assertTrue(errs["rows"] and all(r["result"] == "error" for r in errs["rows"]))
+        # поиск по станции и по номеру набора
+        self.assertTrue(self.client.get("/api/codes", params={"q": "стол b"}).json()["rows"])
+        kit_no = conn.execute("SELECT kit_no FROM kits WHERE km_agg_code=?", (AGG_A.format(sku=self.kit_sku),)).fetchone()[0]
+        self.assertTrue(self.client.get("/api/codes", params={"q": str(kit_no)}).json()["rows"])
+        # спецсимволы в запросе не ломают SQL
+        for q in ("%", "_", "'", '"', ";--", "\\"):
+            self.assertEqual(self.client.get("/api/codes", params={"q": q}).status_code, 200)
+
+    def test_09_station_stats_rates_and_hours(self):
+        """Скорость в час считается по времени реальной работы (паузы > 5 мин не учитываются)."""
+        day = "2026-01-15"
+        st = "Стол S"
+        def ins_scan(t):
+            conn.execute("INSERT INTO scan_log (station_id, code, code_type, result, message, created_at) VALUES (?, 'x', 'item', ?, 'm', ?)",
+                         (st, "error" if t == "09:10:00" else "ok", f"{day} {t}"))
+        for m in range(0, 11):
+            ins_scan(f"09:{m:02d}:00")
+        for m in range(30, 36):
+            ins_scan(f"09:{m:02d}:00")
+        for n in range(5):
+            hour = 9 if n < 3 else 10
+            conn.execute("INSERT INTO kits (kit_sku, kit_name, kit_code, station_id, status, items_count, items_required, opened_at, closed_at) "
+                         "VALUES ('', 'K', 'LRU270571', ?, 'closed', 0, 0, ?, ?)", (st, f"{day} {hour:02d}:00:00", f"{day} {hour:02d}:03:00"))
+            kid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            for j in range(6):
+                conn.execute("INSERT INTO items (km_code, item_sku, item_name, kit_id, station_id, scanned_at, marked) VALUES (?, 's', 'i', ?, ?, ?, 1)",
+                             (f"STAT-{n}-{j}", kid, st, f"{day} {hour:02d}:01:00"))
+        data = self.client.get(f"/api/stats/stations?date={day}").json()
+        self.assertEqual(data["date"], day)
+        d = [x for x in data["stations"] if x["station_id"] == st][0]
+        self.assertEqual((d["kits"], d["items"], d["scans"], d["errors"]), (5, 30, 17, 1))
+        self.assertEqual(d["active_sec"], 900)
+        self.assertEqual(d["kits_per_hour"], 20.0)
+        self.assertEqual(d["items_per_hour"], 120.0)
+        self.assertEqual(d["median_kit_sec"], 180)
+        self.assertEqual({h["hour"]: (h["kits"], h["items"]) for h in data["hourly"]}, {9: (3, 18), 10: (2, 12)})
+        self.assertEqual(self.client.get("/api/stats/stations?date=oops").status_code, 400)
+        self.assertEqual(self.client.get("/api/stats/stations?date=2026-02-31").status_code, 400)
+        self.assertEqual(self.client.get("/api/stats/stations?date=2001-01-01").json()["stations"], [])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

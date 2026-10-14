@@ -13,7 +13,8 @@ from pydantic import BaseModel
 from .db import conn, init_db
 from .validation import process_scan, get_station_state, select_kit, set_station_settings, ensure_box_schema
 from .control import build_tree, search_code, get_stats
-from .station_stats import get_station_stats
+from .station_stats import get_station_stats, valid_date
+from .codes_list import search_codes
 from .report_view import ensure_report_view, full_report_csv
 from .report import (export_csv, report_rows, report_count, export_data_csv, export_data_rows, export_data_count,
                      export_csv_excel, export_data_csv_excel)
@@ -158,9 +159,18 @@ def stats():
 
 
 @app.get("/api/stats/stations")
-def stats_stations():
-    """Работа столов за сегодня: наборы, ошибки, скорость."""
-    return get_station_stats()
+def stats_stations(date: str = Query(default="")):
+    """Работа столов за выбранный день (по умолчанию сегодня): наборы, товары, скорость в час, ошибки, часы."""
+    if date and not valid_date(date):
+        raise HTTPException(status_code=400, detail="Некорректная дата. Нужен формат ГГГГ-ММ-ДД.")
+    return get_station_stats(date or None)
+
+
+@app.get("/api/codes")
+def codes(q: str = Query(default="", max_length=300), errors: int = Query(default=0),
+          limit: int = Query(default=200, ge=1, le=1000)):
+    """Список отсканированных кодов (журнал сканов) с поиском; errors=1 — только ошибки."""
+    return search_codes(q, bool(errors), limit)
 
 
 # ---------- страница «Контроль» ----------
