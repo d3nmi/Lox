@@ -392,11 +392,24 @@ function ensureConsoleSkeleton() {
     input.value = '';
   }
 
+  // Сканер, передающий GS как Alt+0029 (а перевод строки как Alt+0010): читаем такие нажатия сами
+  const altReader = KmUtils.createAltCodeReader((n) => {
+    if (n === 29) input.value += KmUtils.GS;
+    else if (n === 10 || n === 13) submitFromInput();
+  });
+  input.addEventListener('keyup', (e) => altReader.keyup(e));
+
   input.addEventListener('keydown', (e) => {
+    if (altReader.keydown(e)) return;
     if (e.key === 'Enter') { submitFromInput(); return; }
     // Сканеры в режиме «клавиатура» передают GS (ASCII 29) как Ctrl+] (или сразу символом 0x1D).
     // Поле ввода такие нажатия молча игнорирует — вставляем настоящий GS сами, иначе он терялся бы.
-    const isGsKey = (e.ctrlKey && !e.altKey && !e.metaKey && e.code === 'BracketRight') || e.key === KmUtils.GS;
+    // Определяем «клавишу GS» несколькими способами: по физической клавише (code), по коду виртуальной клавиши (keyCode 221 —
+    // так её шлют сканеры, эмулирующие клавиатуру без scan-кода), по символу клавиши (на русской раскладке ']' = 'ъ')
+    // и по самому управляющему символу 0x1D.
+    const ctrlBracket = e.ctrlKey && !e.altKey && !e.metaKey &&
+      (e.code === 'BracketRight' || e.keyCode === 221 || e.which === 221 || [']', '}', 'ъ', 'Ъ'].includes(e.key));
+    const isGsKey = ctrlBracket || e.key === KmUtils.GS || e.key === 'GroupSeparator';
     if (isGsKey) {
       e.preventDefault();
       input.value += KmUtils.GS;

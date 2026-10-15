@@ -40,11 +40,13 @@ def main():
         print(f"  С других станций в сети:  http://{ip}:{PORT}")
         print(f"Для загрузки отчёта ТО:  http://{ip}:{PORT}/report")
         print(f"Контроль и статистика:   http://{ip}:{PORT}/control")
+        print(f"Проверка сканера:        http://{ip}:{PORT}/scan-test")
     else:
         print("  Не удалось определить IP в локальной сети — узнайте его")
         print("  командой `ipconfig` (Windows) и подставьте вместо localhost.")
         print(f"Для загрузки отчёта ТО:  http://localhost:{PORT}/report")
         print(f"Контроль и статистика:   http://localhost:{PORT}/control")
+        print(f"Проверка сканера:        http://localhost:{PORT}/scan-test")
     print("  Не закрывайте это окно, пока сервер должен работать.")
     print("=" * 60)
 

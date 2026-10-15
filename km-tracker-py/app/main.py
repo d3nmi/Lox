@@ -173,12 +173,30 @@ def codes(q: str = Query(default="", max_length=300), errors: int = Query(defaul
     return search_codes(q, bool(errors), limit)
 
 
+# ---------- проверка сканера (что именно присылает сканер, есть ли GS) ----------
+@app.get("/scan-test", include_in_schema=False)
+def scan_test_page():
+    return FileResponse(str(PUBLIC_DIR / "scan-test.html"))
+
+
 # ---------- страница «Контроль» ----------
 # Отдельная страница со своей ссылкой (печатается при старте сервера);
 # в интерфейсе станций её нет.
 @app.get("/control", include_in_schema=False)
 def control_page():
     return FileResponse(str(PUBLIC_DIR / "control.html"))
+
+
+# Как записать символ GS (ASCII 29) в выгружаемый файл. По умолчанию — настоящий GS, без изменений
+# (для машинной обработки). Остальные варианты — для программ, которые GS не принимают или не показывают.
+_GS_MODES = {"raw": None, "space": " ", "none": "", "tag": "[GS]"}
+
+
+def _apply_gs(csv_text: str, gs: str) -> str:
+    if gs not in _GS_MODES:
+        raise HTTPException(status_code=400, detail="Некорректный параметр gs: raw, space, none или tag.")
+    repl = _GS_MODES[gs]
+    return csv_text if repl is None else csv_text.replace(chr(29), repl)
 
 
 # ---------- отчёт для ТО ----------
@@ -195,10 +213,10 @@ def report_preview(limit: int = Query(default=200, ge=1, le=5000)):
 
 
 @app.get("/api/export.csv")
-def export(excel: int = Query(default=0)):
+def export(excel: int = Query(default=0), gs: str = Query(default="raw")):
     # excel=1: числовые коды пишутся как ="..." — Excel не превращает их в числа.
     # Обычная выгрузка (по умолчанию) содержит КМ в исходном виде, без изменений.
-    csv_text = export_csv_excel() if excel else export_csv()
+    csv_text = _apply_gs(export_csv_excel() if excel else export_csv(), gs)
     return Response(
         content=csv_text,
         media_type="text/csv; charset=utf-8",
@@ -208,9 +226,9 @@ def export(excel: int = Query(default=0)):
 
 # ---------- расширенный отчёт: + номер короба DTV, дата сборки, станция ----------
 @app.get("/api/export-full.csv")
-def export_full(excel: int = Query(default=0)):
+def export_full(excel: int = Query(default=0), gs: str = Query(default="raw")):
     return Response(
-        content=full_report_csv(bool(excel)),
+        content=_apply_gs(full_report_csv(bool(excel)), gs),
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": 'attachment; filename="km_export_full.csv"'},
     )
@@ -223,8 +241,8 @@ def export_data_preview(limit: int = Query(default=200, ge=1, le=5000)):
 
 
 @app.get("/api/export-data.csv")
-def export_data_export(excel: int = Query(default=0)):
-    csv_text = export_data_csv_excel() if excel else export_data_csv()
+def export_data_export(excel: int = Query(default=0), gs: str = Query(default="raw")):
+    csv_text = _apply_gs(export_data_csv_excel() if excel else export_data_csv(), gs)
     return Response(
         content=csv_text,
         media_type="text/csv; charset=utf-8",

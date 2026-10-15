@@ -81,6 +81,31 @@ def _resolve_gtin(code):
     return None, False
 
 
+def norm_gtin14(raw):
+    """GTIN -> 14 цифр с ведущими нулями (или None, если это не число из цифр).
+    4630111270571 (13 цифр, как в kits.csv) и 04630111270571 (14 цифр, как в GS1 AI 01) — одно и то же."""
+    s = (raw or '').strip() if isinstance(raw, str) else ''
+    if s and s.isascii() and s.isdigit() and len(s) <= 14:
+        return s.zfill(14)
+    return None
+
+
+def _is_kit_code(tpl, gtin):
+    """GTIN из DM (AI 01) равен «GTIN набора» этого набора в kits.csv? Сравнение — по 14-значному виду."""
+    kit_gtin = norm_gtin14(tpl["kit_sku"])
+    return bool(kit_gtin and gtin and kit_gtin == norm_gtin14(gtin))
+
+
+def _remaining_text(slots, counts):
+    """«Название ×N; …» — что ещё нужно отсканировать до закрытия набора."""
+    parts = []
+    for s in slots:
+        left = s["qty_required"] - counts.get(s["item_sku"], 0)
+        if left > 0:
+            parts.append(f'{s["item_name"]}' + (f' ×{left}' if left > 1 else ''))
+    return '; '.join(parts)
+
+
 # ---- миграция: настройки станции и номер набора ----
 def ensure_box_schema():
     """Вызывается один раз при старте (после init_db). Идемпотентна.
@@ -416,10 +441,11 @@ def _close_kit(station_id, code, gtin, is_gs1, kit_id, tpl, slots):
         return _fail(station_id, code, 'kit_agg', f'Состав набора «{name}» полон — ожидается его агрегационный код (GS1)')
     expected = tpl["kit_sku"]
     if expected:
-        if gtin != expected:
+        if not _is_kit_code(tpl, gtin):
             return _fail(
                 station_id, code, 'kit_agg',
-                f'Состав набора «{name}» полон — ожидается его агрегационный код, отсканирован иной GTIN {gtin}'
+                f'Состав набора «{name}» полон — ожидается его агрегационный код (GTIN {norm_gtin14(expected)}), '
+                f'отсканирован иной GTIN {gtin}. Набор не закрыт'
             )
     else:
         # GTIN набора в справочнике не задан — принимаем любой GS1-код, который не товар из состава
@@ -495,17 +521,29 @@ def _add_to_undetermined(station_id, code, is_gs1, gtin, open_kit, cands, counts
 
     if not hits:
         # возможно, это агрегационный код набора, у которого состав уже полон (набор различим только по нему)
-        if open_kit and is_gs1:
-            complete = [(t, s) for t, s in cands if all(counts.get(x["item_sku"], 0) == x["qty_required"] for x in s)]
-            match = [(t, s) for t, s in complete if t["kit_sku"] == gtin]
-            if not match:
-                nulls = [(t, s) for t, s in complete if not t["kit_sku"]]
-                if len(nulls) == 1 and not any(x["item_sku"] == gtin for x in nulls[0][1]):
-                    match = nulls
-            if len(match) == 1:
-                tpl, slots = match[0]
-                _lock_kit(open_kit["id"], tpl, slots)
-                return _close_kit(station_id, code, gtin, True, open_kit["id"], tpl, slots)
+        if is_gs1:
+            if open_kit:
+                complete = [(t, s) for t, s in cands if all(counts.get(x["item_sku"], 0) == x["qty_required"] for x in s)]
+                match = [(t, s) for t, s in complete if _is_kit_code(t, gtin)]
+                if not match:
+                    nulls = [(t, s) for t, s in complete if not t["kit_sku"]]
+                    if len(nulls) == 1 and not any(x["item_sku"] == gtin for x in nulls[0][1]):
+                        match = nulls
+                if len(match) == 1:
+                    tpl, slots = match[0]
+                    _lock_kit(open_kit["id"], tpl, slots)
+                    return _close_kit(station_id, code, gtin, True, open_kit["id"], tpl, slots)
+            # DM — это код набора из справочника, но товары набора ещё не отсканированы полностью:
+            # говорим об этом прямо (а не «GTIN не найден»/«не подходит»), набор не закрываем
+            kit_hits = [(t, s) for t, s in cands if _is_kit_code(t, gtin)]
+            if kit_hits:
+                t, s = kit_hits[0]
+                have = open_kit["items_count"] if open_kit else 0
+                return _fail(
+                    station_id, code, 'kit_agg',
+                    f'Это код набора «{short_name(t["kit_name"])}», но набор ещё не собран '
+                    f'(принято позиций: {have}). Сначала отсканируйте товары набора: {_remaining_text(s, counts)}'
+                )
         if norm_slot:
             return _fail(station_id, code, 'item', f'Норма по «{norm_slot["item_name"]}» уже выполнена ({norm_slot["qty_required"]} шт) для текущего набора')
         if problem == 'need_km':
@@ -570,7 +608,22 @@ def _handle_item_or_kit_agg(station_id, code):
             return _fail(station_id, code, 'unknown',
                          f'Набор «{short_name(open_kit["kit_name"])}» не найден в справочнике — обратитесь к администратору')
         slots = _template_items(tpl["id"])
-        if open_kit["items_count"] < open_kit["items_required"]:
+        complete = open_kit["items_count"] >= open_kit["items_required"]
+        # Агрегационный код набора проверяем ПЕРВЫМ — до проверки «входит ли GTIN в состав»:
+        # иначе DM набора обработался бы как обычный товар и вернул «не входит в состав».
+        if is_gs1 and _is_kit_code(tpl, gtin):
+            if complete:
+                return _close_kit(station_id, code, gtin, is_gs1, open_kit["id"], tpl, slots)
+            # код набора, но состав ещё не полон: набор НЕ закрываем и код НЕ «сжигаем» —
+            # после добора товаров этот же DM будет принят
+            counts = _kit_counts(open_kit["id"])
+            return _fail(
+                station_id, code, 'kit_agg',
+                f'Это код набора «{short_name(open_kit["kit_name"])}», но набор ещё не собран '
+                f'({open_kit["items_count"]}/{open_kit["items_required"]}). '
+                f'Осталось отсканировать: {_remaining_text(slots, counts)}'
+            )
+        if not complete:
             return _add_to_locked(station_id, code, is_gs1, gtin, open_kit, tpl, slots)
         return _close_kit(station_id, code, gtin, is_gs1, open_kit["id"], tpl, slots)
 

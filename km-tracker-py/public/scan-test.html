@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Проверка сканера — КМ-трекинг</title>
+<style>
+  :root{ --bg:#14171C; --surface:#1A1E24; --surface-2:#20252C; --border:#333A44; --text:#EDEFF2; --dim:#9AA3AF;
+    --accent:#6C97C2; --ok:#4FAE7C; --ok-dim:#1C2A22; --err:#D9686C; --err-dim:#332120; --warn:#D8AB55;
+    --mono:ui-monospace,Consolas,Menlo,monospace; --sans:-apple-system,"Segoe UI",Roboto,Arial,sans-serif; }
+  *{box-sizing:border-box;}
+  body{ margin:0; background:var(--bg); color:var(--text); font-family:var(--sans); font-size:15px; line-height:1.55; }
+  .wrap{ max-width:1100px; margin:0 auto; padding:24px 28px 56px; }
+  h1{ font-size:22px; margin:0 0 6px; } h2{ font-size:16px; margin:24px 0 8px; }
+  p{ color:var(--dim); margin:6px 0; }
+  input{ width:100%; background:var(--surface); border:1px solid var(--border); color:var(--text); border-radius:8px; padding:14px 16px; font-family:var(--mono); font-size:17px; outline:none; }
+  input:focus{ border-color:var(--accent); }
+  .box{ background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:14px 18px; margin-top:12px; font-family:var(--mono); font-size:14px; word-break:break-all; }
+  .verdict{ margin-top:12px; padding:14px 18px; border-radius:10px; font-size:16px; font-weight:600; border:1px solid var(--border); }
+  .verdict.ok{ color:var(--ok); border-color:var(--ok); background:var(--ok-dim); }
+  .verdict.bad{ color:var(--err); border-color:var(--err); background:var(--err-dim); }
+  .gs{ color:var(--warn); font-weight:700; }
+  table{ width:100%; border-collapse:collapse; font-size:13px; font-family:var(--mono); }
+  th{ text-align:left; color:var(--dim); font-weight:600; padding:6px 10px; border-bottom:1px solid var(--border); }
+  td{ padding:4px 10px; border-bottom:1px solid var(--surface-2); }
+  tr.hl td{ background:var(--ok-dim); color:var(--ok); }
+  button{ background:transparent; border:1px solid var(--border); color:var(--dim); border-radius:7px; padding:9px 16px; cursor:pointer; font-size:14px; }
+  button:hover{ color:var(--text); border-color:var(--dim); }
+  .scroll{ max-height:340px; overflow:auto; border:1px solid var(--border); border-radius:10px; background:var(--surface); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Проверка сканера</h1>
+  <p>Нажмите в поле ниже и отсканируйте код маркировки (DataMatrix). Страница покажет, что именно прислал сканер,
+    и есть ли в коде невидимый разделитель GS (ASCII 29). Ничего никуда не сохраняется и не отправляется.</p>
+  <input id="t" placeholder="Отсканируйте код сюда" autocomplete="off" autofocus>
+  <div class="verdict" id="verdict" style="display:none;"></div>
+  <div class="box" id="result" style="display:none;"></div>
+  <p style="margin-top:14px;"><button type="button" id="clear">Очистить</button></p>
+
+  <h2>Что нажимал сканер (последние события)</h2>
+  <p>Строка, подсвеченная зелёным, — нажатие, которое страница считает символом GS (Ctrl+] или Alt-код 0029). Если GS в коде нет и таких строк тоже нет —
+    сканер GS не передаёт (его нужно включить в настройках сканера).</p>
+  <div class="scroll"><table>
+    <thead><tr><th>событие</th><th>key</th><th>code</th><th>keyCode</th><th>Ctrl</th><th>Alt</th><th>Shift</th></tr></thead>
+    <tbody id="log"></tbody>
+  </table></div>
+</div>
+<script src="km-utils.js"></script>
+<script>
+const GS = String.fromCharCode(29);
+const t = document.getElementById('t'), log = document.getElementById('log');
+function esc(s){ return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function show(v){
+  v = String(v);
+  const n = v.split(GS).length - 1;
+  const shown = v.split(GS).map(esc).join('<span class="gs">[GS]</span>');
+  const ctrl = [...v].filter(c => c.charCodeAt(0) < 32 && c !== GS).length;
+  const verdict = document.getElementById('verdict'), res = document.getElementById('result');
+  if (!v) { verdict.style.display = res.style.display = 'none'; return; }
+  verdict.style.display = res.style.display = 'block';
+  if (n > 0) { verdict.className = 'verdict ok'; verdict.textContent = `GS в коде есть: ${n} шт. Сканер и браузер передают код правильно.`; }
+  else { verdict.className = 'verdict bad'; verdict.textContent = 'GS в коде НЕТ. Если это КМ с полями 91 и 92 — сканер не передаёт разделитель (или браузер его теряет).'; }
+  res.innerHTML = `${shown}<br><span style="color:var(--dim)">длина: ${v.length} символов` + (ctrl ? `, других управляющих символов: ${ctrl}` : '') + `</span>`;
+}
+function addLog(type, e, hl){
+  const tr = document.createElement('tr'); if (hl) tr.className = 'hl';
+  tr.innerHTML = `<td>${type}</td><td>${esc(JSON.stringify(e.key))}</td><td>${esc(e.code || '')}</td><td>${e.keyCode || ''}</td><td>${e.ctrlKey ? 'да' : ''}</td><td>${e.altKey ? 'да' : ''}</td><td>${e.shiftKey ? 'да' : ''}</td>`;
+  log.insertBefore(tr, log.firstChild);
+  while (log.children.length > 80) log.removeChild(log.lastChild);
+}
+const altReader = KmUtils.createAltCodeReader((n) => {
+  if (n === 29) { t.value += GS; show(t.value); }
+  else if (n === 10 || n === 13) show(t.value);
+  addLog('Alt-код ' + String(n).padStart(4, '0'), { key: n === 29 ? 'GS' : 'управляющий', code: 'Alt+Numpad' }, n === 29);
+});
+t.addEventListener('keyup', (e) => altReader.keyup(e));
+t.addEventListener('keydown', (e) => {
+  if (altReader.keydown(e)) return;
+  const gsKey = (e.ctrlKey && !e.altKey && !e.metaKey && (e.code === 'BracketRight' || e.keyCode === 221 || [']', '}', 'ъ', 'Ъ'].includes(e.key)))
+    || e.key === GS || e.key === 'GroupSeparator';
+  if (e.key !== 'Enter' && (gsKey || e.ctrlKey || e.altKey || e.key.length > 1)) addLog('keydown', e, gsKey);
+  if (gsKey) { e.preventDefault(); t.value += GS; show(t.value); }   // так же поступает рабочее место станции
+  if (e.key === 'Enter') { e.preventDefault(); show(t.value); }
+});
+t.addEventListener('input', () => show(t.value));
+document.getElementById('clear').addEventListener('click', () => { t.value = ''; log.innerHTML = ''; show(''); t.focus(); });
+</script>
+</body>
+</html>

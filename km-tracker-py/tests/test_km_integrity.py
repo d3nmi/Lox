@@ -319,7 +319,10 @@ class KmIntegrityTest(unittest.TestCase):
             self.assertEqual(hits[0]["box_code"], "DTV0003111664")
         # часть кода (середина) и регистр: серийник чувствителен к регистру
         self.assertTrue(self.client.get("/api/codes", params={"q": "UZV'OEIGc"}).json()["rows"])
-        self.assertEqual(self.client.get("/api/codes", params={"q": "uzv'oeigc"}).json()["total"], 0)
+        exact = self.client.get("/api/codes", params={"q": "UZV'OEIGc"}).json()
+        self.assertEqual(exact["mode"], "exact")                      # точное совпадение с учётом регистра
+        lower = self.client.get("/api/codes", params={"q": "uzv'oeigc"}).json()
+        self.assertEqual(lower["mode"], "nocase")                     # другой регистр — только запасной поиск, с пометкой
         # только ошибки: есть повторный скан КМ1 из теста дублей
         errs = self.client.get("/api/codes?errors=1&limit=1000").json()
         self.assertTrue(errs["rows"] and all(r["result"] == "error" for r in errs["rows"]))
@@ -362,6 +365,79 @@ class KmIntegrityTest(unittest.TestCase):
         self.assertEqual(self.client.get("/api/stats/stations?date=oops").status_code, 400)
         self.assertEqual(self.client.get("/api/stats/stations?date=2026-02-31").status_code, 400)
         self.assertEqual(self.client.get("/api/stats/stations?date=2001-01-01").json()["stations"], [])
+
+
+    def test_10_gs_export_modes(self):
+        """Представление GS в файле выбирается параметром gs; по умолчанию — настоящий GS."""
+        for url in ("/api/export.csv", "/api/export-full.csv", "/api/export-data.csv", "/api/export.csv?excel=1"):
+            sep = "&" if "?" in url else "?"
+            raw = self.client.get(url).content
+            self.assertGreater(raw.count(b"\x1d"), 0, url)
+            self.assertEqual(self.client.get(url + sep + "gs=raw").content, raw)
+            sp = self.client.get(url + sep + "gs=space").content
+            self.assertEqual((sp.count(b"\x1d"), sp), (0, raw.replace(b"\x1d", b" ")))
+            no = self.client.get(url + sep + "gs=none").content
+            self.assertEqual(no, raw.replace(b"\x1d", b""))
+            tag = self.client.get(url + sep + "gs=tag").content
+            self.assertEqual(tag, raw.replace(b"\x1d", b"[GS]"))
+        self.assertEqual(self.client.get("/api/export.csv?gs=bogus").status_code, 400)
+
+    def test_11_codes_search_tolerant(self):
+        """Поиск находит код по сокращённому виду «начало…конец», с префиксом сканера ]d2 и при смене регистра."""
+        def hit(q):
+            return [r for r in self.client.get("/api/codes", params={"q": q}).json()["rows"] if r["code"] == KM1]
+        self.assertTrue(hit(KM1[:16] + "…" + KM1[-8:]))
+        self.assertTrue(hit("]d2" + KM1.replace(GS, "")))
+        self.assertTrue(hit(" " + KM1.replace(GS, "") + " \t"))
+        data = self.client.get("/api/codes", params={"q": KM1.replace(GS, "").swapcase()}).json()
+        self.assertEqual(data["mode"], "nocase")
+        self.assertTrue([r for r in data["rows"] if r["code"] == KM1])
+        self.assertEqual(self.client.get("/api/codes", params={"q": "zzzNOTFOUND"}).json()["total"], 0)
+
+
+    def test_12_restore_lost_gs(self):
+        """Если сканер не передал GS, сервер восстанавливает их (КМ строгого вида) и хранит настоящую строку."""
+        station = "Стол R"
+        km_a = "0103253581768655215RESTA1" + GS + "91EE12" + GS + "92" + "a" * 44
+        km_b = "0103253581735374215RESTB2" + GS + "91EE12" + GS + "92" + "b" * 44
+        agg = "01" + self.kit_sku[:14].rjust(14, "0") + "21RESTAGG" + GS + "91EE12" + GS + "92" + "c" * 44
+        glued = lambda c: c.replace(GS, "")          # то, что приходит от сканера без GS
+        scans = [glued(km_a), glued(km_b)] + self.other_codes({"03253581768655", "03253581735374"}, "RS") + [glued(agg)]
+        for c in scans:
+            res = self.scan(station, c)
+            self.assertEqual(res["result"], "ok", res["message"])
+        for original in (km_a, km_b):
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM items WHERE km_code=?", (original,)).fetchone()[0], 1,
+                             "в базе должна лежать настоящая строка с GS")
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM items WHERE km_code=?", (glued(original),)).fetchone()[0], 0)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM kits WHERE km_agg_code=?", (agg,)).fetchone()[0], 1)
+        # тот же код ещё раз — и без GS, и с GS — это дубль (варианты не расходятся)
+        self.assertIn("дубль", self.scan(station, glued(km_a))["message"])
+        self.assertIn("дубль", self.scan(station, km_a)["message"])
+        # код, где GS уже есть, и код другого вида не трогаются
+        self.assertEqual(validation.restore_gs(km_a), km_a)
+        self.assertEqual(validation.restore_gs("2000200741824"), "2000200741824")
+        self.assertEqual(validation.restore_gs("010325358171771421short"), "010325358171771421short")
+        # реальные «слипшиеся» коды из отчёта
+        glued_real = "0103253581717714215tvtZe91EE1292aZlgKNjmalGP1xil94YvLCDGGc0k73RIHwWdkQqJXCA="
+        self.assertEqual(validation.restore_gs(glued_real),
+                         "0103253581717714215tvtZe" + GS + "91EE12" + GS + "92aZlgKNjmalGP1xil94YvLCDGGc0k73RIHwWdkQqJXCA=")
+
+    def test_13_scan_test_page(self):
+        r = self.client.get("/scan-test")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("Проверка сканера", r.text)
+
+
+    def test_14_alt_code_reader(self):
+        """Сканер шлёт GS как Alt+0029, перевод строки — Alt+0010: клиент их распознаёт; печатные Alt-коды не трогает."""
+        try:
+            subprocess.run(["node", "--version"], capture_output=True, check=True)
+        except (OSError, subprocess.CalledProcessError):
+            self.skipTest("Node.js не установлен")
+        p = subprocess.run(["node", str(ROOT / "tests" / "client_altcode_check.js")], capture_output=True, text=True, check=True)
+        # 0029, 0029, 0010 и «029» (с ведущим нулём, 3 цифры, по Alt-up); «0065» (буква A) и «29» (без нуля) — пропускаются
+        self.assertEqual(json.loads(p.stdout), [29, 29, 10, 29])
 
 
 if __name__ == "__main__":
