@@ -440,5 +440,85 @@ class KmIntegrityTest(unittest.TestCase):
         self.assertEqual(json.loads(p.stdout), [29, 29, 10, 29])
 
 
+    def test_03b_export_consistency(self):
+        """Данные в базе, отчёты и разобранные обратно CSV согласованы; проверка ловит поломки."""
+        res = self.client.get("/api/export-check").json()
+        self.assertEqual(res["problems"], [], res)
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["stats"]["closed_kits"], 2)
+        self.assertGreater(res["stats"]["codes_with_gs"], 0)
+        # поломка: лишняя строка в выгрузочной таблице -> проверка её находит
+        conn.execute("INSERT INTO export_data (kit_id, km_agg_code, km_code) VALUES (1, 'X', 'Y')")
+        try:
+            bad = self.client.get("/api/export-check").json()
+            self.assertFalse(bad["ok"])
+            self.assertTrue(any("export_data" in p for p in bad["problems"]))
+        finally:
+            conn.execute("DELETE FROM export_data WHERE km_agg_code='X'")
+        self.assertTrue(self.client.get("/api/export-check").json()["ok"])
+
+
+    def _read_xlsx(self, content):
+        import io, zipfile
+        from openpyxl import load_workbook
+        self.assertIsNone(zipfile.ZipFile(io.BytesIO(content)).testzip())
+        wb = load_workbook(io.BytesIO(content))
+        from app.xlsx_export import decode_xml_text
+        sheets = {}
+        for ws in wb.worksheets:
+            rows = []
+            for row in ws.iter_rows():
+                rows.append([(c.value, c.data_type) for c in row])
+            sheets[ws.title] = rows
+        return sheets, decode_xml_text
+
+    def test_16_xlsx_matches_csv(self):
+        """XLSX (один лист «Расширенный») содержит те же данные, что расширенный CSV (в т.ч. GS), а коды — строго текстом."""
+        r = self.client.get("/api/export.xlsx")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("spreadsheetml.sheet", r.headers["content-type"])
+        sheets, decode = self._read_xlsx(r.content)
+        self.assertEqual(list(sheets), ["Расширенный"])
+        full_csv = self.csv_rows(self.client.get("/api/export-full.csv").content)
+        y = sheets["Расширенный"]
+        self.assertEqual([c[0] for c in y[0]], full_csv[0])
+        self.assertEqual(len(y), len(full_csv))
+        for xr, cr in zip(y[1:], full_csv[1:]):
+            self.assertEqual(decode(xr[0][0] or ''), cr[0])                              # код набора (с GS) один в один
+            self.assertEqual('' if xr[1][0] is None else str(xr[1][0]), cr[1])           # номер набора
+            self.assertEqual(xr[2][0], cr[2])                                            # название
+            self.assertEqual(decode(xr[3][0] or ''), cr[3])                              # КМ (с GS) один в один
+            self.assertEqual((xr[4][0] or ""), cr[4])                                    # короб DTV
+            self.assertEqual(xr[6][0], cr[6])                                            # станция
+            self.assertEqual(xr[5][0].strftime("%Y-%m-%d %H:%M:%S"), cr[5])              # дата сборки — настоящая дата Excel
+            if xr[0][0] is not None and xr[3][0] is not None:
+                self.assertEqual((xr[0][1], xr[3][1]), ("s", "s"))                       # строго текст
+        km_cells = [decode(r_[3][0] or '') for r_ in y[1:]]
+        for original in (KM1, KM2, KM_SPECIAL, KM_TRAILING_GS):
+            self.assertIn(original, km_cells, "КМ в XLSX изменён или потерян")
+        # --- режимы GS ---
+        for mode, expect in (("tag", "[GS]"), ("space", " "), ("none", "")):
+            sh, dec = self._read_xlsx(self.client.get(f"/api/export.xlsx?gs={mode}").content)
+            cells = [dec(r_[3][0] or '') for r_ in sh["Расширенный"][1:]]
+            self.assertIn(KM1.replace(GS, expect), cells, mode)
+            self.assertFalse(any(GS in c for c in cells), mode)
+        self.assertEqual(self.client.get("/api/export.xlsx?gs=bogus").status_code, 400)
+        # в самом файле нет запрещённого в XML байта 0x1D: GS записан как _x001D_
+        import io, zipfile
+        raw_xml = b"".join(zipfile.ZipFile(io.BytesIO(r.content)).read(n) for n in zipfile.ZipFile(io.BytesIO(r.content)).namelist())
+        self.assertNotIn(b"\x1d", raw_xml)
+        self.assertIn(b"_x001D_", raw_xml)
+
+    def test_17_xlsx_cells_are_text(self):
+        """Числоподобные строки, «=формулы» и текст «_x001D_» остаются текстом и не искажаются."""
+        from app import xlsx_export as xe
+        tricky = ["0104630111270571210000123", "=1+1", "+SUM(A1)", "@x", "-5", "1E5", "abc_x001D_def", "a" + GS + "b" + GS, "_x005F_x"]
+        content = xe.build_xlsx_bytes([{"title": "T", "headers": ["h"], "rows": [[v] for v in tricky], "text_cols": (0,)}])
+        sheets, decode = self._read_xlsx(content)
+        for (cell, dtype), original in zip([r_[0] for r_ in sheets["T"][1:]], tricky):
+            self.assertEqual(dtype, "s", original)
+            self.assertEqual(decode(cell), original)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

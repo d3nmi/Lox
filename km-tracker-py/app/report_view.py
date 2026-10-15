@@ -75,12 +75,18 @@ def _excel(val):
     return _esc(s)
 
 
-def full_report_csv(excel=False):
-    """Выгрузка в хронологическом порядке закрытия наборов. КМ записываются без изменений."""
+def full_report_data():
+    """Строки расширенного отчёта в хронологическом порядке (по номеру набора). Общий источник для CSV и XLSX."""
     with read_lock():
         rows = conn.execute(
             f"SELECT {', '.join(_COLS)} FROM report_view ORDER BY kit_no, item_id"
         ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def full_report_csv(excel=False):
+    """Выгрузка в хронологическом порядке закрытия наборов. КМ записываются без изменений."""
+    rows = full_report_data()
     cell_km = _excel if excel else _esc
     lines = [';'.join(_esc(h) for h in HEADERS)]
     for r in rows:

@@ -15,6 +15,8 @@ from .validation import process_scan, get_station_state, select_kit, set_station
 from .control import build_tree, search_code, get_stats
 from .station_stats import get_station_stats, valid_date
 from .codes_list import search_codes
+from .export_check import check_export_consistency
+from .xlsx_export import export_xlsx, GS_MODES
 from .report_view import ensure_report_view, full_report_csv
 from .report import (export_csv, report_rows, report_count, export_data_csv, export_data_rows, export_data_count,
                      export_csv_excel, export_data_csv_excel)
@@ -222,6 +224,28 @@ def export(excel: int = Query(default=0), gs: str = Query(default="raw")):
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": 'attachment; filename="km_export.csv"'},
     )
+
+
+# ---------- выгрузка в XLSX (два листа: основной и расширенный отчёт) ----------
+@app.get("/api/export.xlsx")
+def export_xlsx_route(gs: str = Query(default="raw")):
+    if gs not in GS_MODES:
+        raise HTTPException(status_code=400, detail="Некорректный параметр gs: raw, tag, space или none.")
+    try:
+        content = export_xlsx(gs)
+    except RuntimeError as err:   # нет библиотеки openpyxl — сообщение написано для пользователя
+        raise HTTPException(status_code=503, detail=str(err))
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="km_export.xlsx"'},
+    )
+
+
+# ---------- проверка согласованности данных и выгрузок ----------
+@app.get("/api/export-check")
+def export_check():
+    return check_export_consistency()
 
 
 # ---------- расширенный отчёт: + номер короба DTV, дата сборки, станция ----------

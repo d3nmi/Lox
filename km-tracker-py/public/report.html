@@ -34,16 +34,28 @@
   <p class="note">Формат выгрузки: Код идентификации набора / Номер набора / Наименование товара / Код маркировки.
     Символ GS (ASCII 29) в таблице показан как [GS], а в файле записан настоящим символом.
     В файл входят только товары с КМ из закрытых наборов.</p>
+  <div class="toolbar" style="margin-bottom:8px;">
+    <label for="gs-mode" class="note" style="margin:0;">Символ GS (ASCII 29) в скачиваемом файле:</label>
+    <select id="gs-mode" class="btn ghost" style="padding:9px 12px;">
+      <option value="raw">настоящий GS — без изменений (в XLSX — как _x001D_)</option>
+      <option value="space">заменить на пробел</option>
+      <option value="none">убрать</option>
+      <option value="tag">записать как [GS] (для чтения глазами)</option>
+    </select>
+  </div>
+  <p class="note" style="margin:0 0 14px;">GS — невидимый разделитель между полями кода. В Excel, Блокноте и при копировании в чат он не виден
+    и может пропадать, поэтому код «выглядит» слитным — в файле при этом он есть (в таблице ниже он показан как [GS]).</p>
   <div class="toolbar">
-    <a class="btn" href="/api/export.csv" id="dl">Скачать CSV</a>
-    <a class="btn ghost" href="/api/export.csv?excel=1" title="Числовые коды записываются как текст, чтобы Excel не превратил их в числа">CSV для Excel</a>
+    <a class="btn" href="/api/export.csv" data-base="/api/export.csv" id="dl">Скачать CSV</a>
+    <a class="btn" href="/api/export.xlsx" data-base="/api/export.xlsx" title="Excel-файл: расширенный отчёт (номер короба DTV, дата сборки, станция)">Скачать XLSX (расширенный)</a>
+    <a class="btn ghost" href="/api/export.csv?excel=1" data-base="/api/export.csv?excel=1" title="Числовые коды записываются как текст, чтобы Excel не превратил их в числа">CSV для Excel</a>
     <button class="btn ghost" id="refresh" type="button">Обновить таблицу</button>
   </div>
   <p class="note" style="margin-top:4px;">Расширенная выгрузка — те же строки, плюс номер короба DTV (если набор уже в коробе),
     дата сборки и название станции.</p>
   <div class="toolbar">
-    <a class="btn ghost" href="/api/export-full.csv">Расширенный CSV</a>
-    <a class="btn ghost" href="/api/export-full.csv?excel=1" title="Числовые коды записываются как текст, чтобы Excel не превратил их в числа">Расширенный CSV для Excel</a>
+    <a class="btn ghost" href="/api/export-full.csv" data-base="/api/export-full.csv">Расширенный CSV</a>
+    <a class="btn ghost" href="/api/export-full.csv?excel=1" data-base="/api/export-full.csv?excel=1" title="Числовые коды записываются как текст, чтобы Excel не превратил их в числа">Расширенный CSV для Excel</a>
   </div>
   <div class="table-wrap">
     <table>
@@ -53,6 +65,12 @@
   </div>
   <div id="empty" class="empty" style="display:none;">Пока нет закрытых наборов.</div>
   <div id="count"></div>
+
+  <h2 style="font-size:16px; margin:28px 0 8px;">Проверка данных</h2>
+  <p class="note" style="margin:0 0 10px;">Сверяет базу с отчётами и разбирает готовые CSV обратно: нет ли неполных наборов, дыр в нумерации,
+    кодов без GS и расхождений между таблицами. Ничего не меняет.</p>
+  <button class="btn ghost" id="check-btn" type="button">Проверить данные</button>
+  <div id="check-out" style="margin-top:12px;"></div>
 </div>
 <script src="km-utils.js"></script>
 <script>
@@ -73,6 +91,25 @@ async function load(){
     : `Всего строк: ${data.total}.`;
 }
 document.getElementById('refresh').addEventListener('click',load);
+function updateLinks(){
+  const mode=document.getElementById('gs-mode').value;
+  document.querySelectorAll('a[data-base]').forEach(a=>{
+    const base=a.dataset.base;
+    a.href = mode==='raw' ? base : base+(base.includes('?')?'&':'?')+'gs='+mode;
+  });
+}
+document.getElementById('gs-mode').addEventListener('change',updateLinks);
+document.getElementById('check-btn').addEventListener('click', async ()=>{
+  const out=document.getElementById('check-out'); out.textContent='Проверяю…';
+  let d=null; try{ const r=await fetch('/api/export-check'); if(r.ok) d=await r.json(); }catch(e){}
+  if(!d){ out.innerHTML='<span id="err">Не удалось выполнить проверку.</span>'; return; }
+  const li=(a,c)=>a.map(x=>`<li style="color:${c}">${esc(x)}</li>`).join('');
+  const s=d.stats;
+  out.innerHTML=`<div style="font-weight:600;color:${d.ok?'var(--ok,#4FAE7C)':'var(--err)'}">${d.ok?'Ошибок не найдено.':'Найдены ошибки:'}</div>`+
+    `<ul style="margin:6px 0 6px 18px;padding:0;">${li(d.problems,'var(--err)')}${li(d.warnings,'#D8AB55')}</ul>`+
+    `<div class="note" style="margin:0;">Закрытых наборов: ${s.closed_kits}, в сборке: ${s.open_kits}, строк в отчёте: ${s.report_rows}, `+
+    `проверено кодов: ${s.codes_checked} (с GS: ${s.codes_with_gs}).</div>`;
+});
 load();
 </script>
 </body>
